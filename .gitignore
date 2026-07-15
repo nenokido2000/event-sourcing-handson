@@ -1,0 +1,36 @@
+# === Gradle ===
+.gradle/
+build/
+# Wrapper 本体は追跡する（下の除外に引っかからないよう明示）
+!gradle/wrapper/gradle-wrapper.jar
+
+# === Java ===
+*.class
+*.log
+hs_err_pid*
+replay_pid*
+
+# === Spring Boot ===
+*.original
+
+# === IDE ===
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+bin/
+
+# === macOS ===
+.DS_Store
+
+# === Claude Code（ステアリングは追跡、実行時ログ/ローカル設定は除外）===
+.claude/stop-check.log
+.claude/settings.local.json
+
+# === LocalStack / infra 実行時データ ===
+.localstack/
+volume/

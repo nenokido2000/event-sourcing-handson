@@ -1,0 +1,63 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew *)",
+      "Bash(docker compose *)",
+      "Bash(docker ps*)",
+      "Bash(awslocal *)",
+      "Bash(curl -s http://localhost:8080/*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hook-compile.sh",
+            "timeout": 60,
+            "statusMessage": "コンパイル中..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -q 'rm -rf' && echo '{\"decision\":\"block\",\"reason\":\"rm -rf は安全のためブロックされています\"}' && exit 2 || true",
+            "timeout": 10,
+            "statusMessage": "コマンドを検証中..."
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "es-domain-reviewer|es-poc-tester",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hook-subagent-notify.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hook-stop-check.sh",
+            "timeout": 300,
+            "statusMessage": "最終チェック中..."
+          }
+        ]
+      }
+    ]
+  }
+}
