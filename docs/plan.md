@@ -32,7 +32,10 @@
 
 ## 技術スタック（第1弾・倉庫）
 - 言語/ビルド: Java 21 / **Gradle (Kotlin DSL) + Wrapper**
-- FW: **Axon Framework 4.x（最新4.12系）** + Spring Boot 3.x（axon-spring-boot-starter）
+- FW: **Axon Framework 4.x（4.13+ = Spring Boot 4 対応版）** + **Spring Boot 4.1**（axon-spring-boot-starter）
+  - Spring Boot 4.1 は2026-06リリースの現行推奨版（公式LTS designation は無い）。3.x系はOSSサポート終了済み（**3.5 が 2026-06-30 EOL**）、OSSアクティブは 4.0（〜2026-12-31）/ 4.1（〜2027-07-31）のみで **4.1 が最長** → 実質4.1一択。
+  - **Axon 4 が Spring Boot 4 に対応したのは 4.13 から**（4.12不可）。4.13は「4→5移行の踏み石」版で Spring Boot 4 統合が主眼 → M5の4→5移行がむしろ楽になる。
+  - **Spring Boot 4 は Jackson 3 デフォルト**。Axon の JacksonSerializer は元々 Jackson 2 前提だったため、Serializer 設定（Jackson 3 対応 or 明示指定）に注意。JDK 17+ 要件（Java 21 で充足）。
 - 読みモデル(Query側): **PostgreSQL**（Docker）
 - イベントストア: 段階導入（M3=組み込み → M4=DynamoDB自作）
 - ローカルAWS: **LocalStack**（DynamoDB + DynamoDB Streams）。AWS SDK for Java v2。

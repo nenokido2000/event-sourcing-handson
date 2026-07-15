@@ -12,7 +12,8 @@
 
 ## 技術スタック
 - Java 21 (Corretto) / **Gradle (Kotlin DSL) + Wrapper**
-- Axon Framework 4.x（4.12系）+ Spring Boot 3.x（`axon-spring-boot-starter`）
+- Axon Framework 4.x（**4.13+ = Spring Boot 4 対応版**）+ Spring Boot 4.1（`axon-spring-boot-starter`）
+  - ※ Spring Boot 4 は Jackson 3 がデフォルト。Axon の Serializer 設定に注意（詳細は `docs/plan.md`）
 - 読みモデル: PostgreSQL / ローカルAWS: LocalStack（DynamoDB + Streams）/ AWS SDK for Java v2
 
 ## モジュール構成
