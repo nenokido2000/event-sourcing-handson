@@ -28,7 +28,7 @@
 ## 環境前提（確認済み 2026-07）
 - 作業ディレクトリ `/Users/naokienokido/event-sourcing`。Git未初期化（M0で `git init`）。
 - Java 21 (Corretto) / Docker 29 + Compose v2 / Node 23 / Git あり。
-- **未導入**: Maven, Gradle（→ Gradle Wrapper 同梱で解決）, PHP/Composer（→ Docker化）, AWS CLI（→ LocalStack + AWS SDK for Java v2。CLIが要る場面は `awslocal` コンテナ）。
+- **未導入**: Maven, Gradle（→ Gradle Wrapper 同梱で解決）, PHP/Composer（→ Docker化）, AWS CLI（→ DynamoDB Local + AWS SDK for Java v2。CLIが要る場面は `aws --endpoint-url http://localhost:8000`）。
 
 ## 技術スタック（第1弾・倉庫）
 - 言語/ビルド: Java 21 / **Gradle (Kotlin DSL) + Wrapper**
@@ -38,7 +38,7 @@
   - **Spring Boot 4 は Jackson 3 デフォルト**。Axon の JacksonSerializer は元々 Jackson 2 前提だったため、Serializer 設定（Jackson 3 対応 or 明示指定）に注意。JDK 17+ 要件（Java 21 で充足）。
 - 読みモデル(Query側): **PostgreSQL**（Docker）
 - イベントストア: 段階導入（M3=組み込み → M4=DynamoDB自作）
-- ローカルAWS: **LocalStack**（DynamoDB + DynamoDB Streams）。AWS SDK for Java v2。
+- ローカルAWS: **DynamoDB Local**（`amazon/dynamodb-local`。DynamoDB + DynamoDB Streams）。AWS SDK for Java v2。※LocalStackはライセンス必須化（2026-03、アカウント+auth token必須）につき不採用。DynamoDB Localは無料・アカウント不要で本PoCに必要なDynamoDB+Streamsを満たす。
 
 ## アーキテクチャ方針（倉庫）
 - **境界づけられたコンテキスト**: Inventory(コア) / Receiving / Fulfillment / Stocktaking。上流に Ordering(薄い外部トリガ)。
@@ -52,14 +52,14 @@
   - 読み側プロジェクション: `AvailableStockView` / `AllocationView` / `StockLedgerView`（全在庫変動履歴＝履歴のうまみを可視化）。
 - **プロジェクションの給餌方式（段階）**:
   - M3(組み込みストア期): Axon の TrackingEventProcessor で素直に投影。
-  - M4(DynamoDB期): **DynamoDB Streams → ストリーム消費プロセス(LocalStack) → PostgreSQL投影** に切替（AWS本番パターンに一致。Axon の追跡機構はバイパス）。
+  - M4(DynamoDB期): **DynamoDB Streams → ストリーム消費プロセス(DynamoDB Local) → PostgreSQL投影** に切替（AWS本番パターンに一致。Axon の追跡機構はバイパス）。消費は素のAWS SDK v2ポーリングで組む（KCLのStreams AdapterはDynamoDB Local相手だと癖が出る場合があるため）。
 
 ## モジュール構成（Gradle マルチモジュール）
 ```
 event-sourcing/
   docs/                          # plan.md ＋ 分析・設計の成果物（Markdown＋Mermaid）
   .claude/                       # ステアリング（rules/hooks/skills/agents）
-  infra/                         # docker-compose(LocalStack, PostgreSQL), 初期化スクリプト
+  infra/                         # docker-compose(DynamoDB Local, PostgreSQL), 初期化スクリプト
   warehouse-domain/              # 集約・コマンド・イベント（純ドメイン）
   warehouse-command/             # コマンドハンドラ・Axon設定
   warehouse-query/               # プロジェクション・読みモデル・クエリハンドラ
@@ -69,18 +69,18 @@ event-sourcing/
 ```
 
 ## マイルストーン（分析最優先・段階的・各段で成果物を残す）
-- **M0 — 足場**: `git init`、Gradleマルチモジュール雛形、`infra/docker-compose.yml`(LocalStack+Postgres)、README。（→ ここでステアリングのゲートが有効化）
+- **M0 — 足場**: `git init`、Gradleマルチモジュール雛形、`infra/docker-compose.yml`(DynamoDB Local+Postgres)、README。（→ ここでステアリングのゲートが有効化）
 - **M1 — 倉庫の戦略設計（分析成果物）**: イベントストーミング（Big Picture→Process→Design）を `docs/` にMermaidで記録。BC/コンテキストマップ/コアサブドメイン特定。← **最重視**（`event-storming` スキル活用）
 - **M2 — 倉庫の戦術設計（成果物）**: 集約境界・コマンド/イベント/ポリシー・不変条件・ユビキタス言語を `docs/` に整理。
 - **M3 — 倉庫実装 (Axon 4.x / 組み込みストア)**: 受入→引当→出荷の**動く垂直スライス** + 3プロジェクション + REST API。
-- **M4 — 自作DynamoDBイベントストア (4.x)**: `AbstractEventStorageEngine` をDynamoDBで実装。投影をDynamoDB Streams駆動へ切替。LocalStackで一気通貫。← AWS制約を満たす山場。
+- **M4 — 自作DynamoDBイベントストア (4.x)**: `AbstractEventStorageEngine` をDynamoDBで実装。投影をDynamoDB Streams駆動へ切替。DynamoDB Localで一気通貫。← AWS制約を満たす山場。
 - **M5 — 倉庫を Axon 5.x へアップグレード**: 公式移行ガイド駆動の**差分作業**。(5-a) ドメイン/アプリを5.xへ（イベントストアは5.x組み込みへ一旦フォールバック）→ (5-b) 自作DynamoDBエンジンを5.x SPI(非同期/AppendCondition・DCB)へ移植。差分は `docs/axon4-to-5-migration.md` に記録。
 - **M6 — ウォレットを最初から 5.x で構築**: 集約=会員ウォレット, 不変条件=残高≥0, 失効=時間駆動, 付与残高/会計負債でCQRS。復習＋インフラ理解の定着。
 - **M7 — 他言語PoC(PHP)向け情報整理**: ウォレットを共通題材に、PHPフレームワーク選定基準（DDD/CQRS/ES適性・世界的普及度）を調査整理。候補メモ（例: Ecotone / Prooph / EventSauce）。**具体選定はこの段で判断**。
 
 ## 検証（各段のエンドツーエンド確認）
 - M3: REST で `ReceiveStock`→`AllocateStock`→`ShipStock` → 3プロジェクション照会 → `available=onHand-allocated` が保たれ `StockLedgerView` に全履歴が並ぶ。過剰引当/出荷が不変条件で弾かれる。
-- M4: `docker compose up` → 同シナリオ → LocalStackのDynamoDBに `aggregateIdentifier/sequenceNumber` 行が追記され条件式で連番重複が拒否されること、Streams経由でPostgreSQL投影が更新されることを確認。
+- M4: `docker compose up` → 同シナリオ → DynamoDB Localに `aggregateIdentifier/sequenceNumber` 行が追記され条件式で連番重複が拒否されること、Streams経由でPostgreSQL投影が更新されることを確認。
 - M5: 移行後、同RESTシナリオが5.x上で同結果になる回帰確認。差分を移行ドキュメントに反映。
 - M6: ウォレットで 付与→利用→失効、残高≥0違反の拒否、失効の時間駆動発火、会計負債ビューの整合を確認。
 

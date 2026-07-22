@@ -4,7 +4,7 @@
       "Bash(./gradlew *)",
       "Bash(docker compose *)",
       "Bash(docker ps*)",
-      "Bash(awslocal *)",
+      "Bash(aws dynamodb *)",
       "Bash(curl -s http://localhost:8080/*)"
     ]
   },

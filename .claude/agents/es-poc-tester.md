@@ -19,7 +19,7 @@ model: sonnet
    - **不変条件の異常系**: 在庫を超える引当 → 拒否される(イベントが発行されない/エラー応答)
    - 出荷(`ShipStock`) → 引当分が出荷される
    - プロジェクション照会: `AvailableStockView` / `AllocationView` / `StockLedgerView` に反映され、Ledger に一連の履歴が過去形イベントとして並ぶ
-   - (M4以降) LocalStack の DynamoDB に `aggregateIdentifier`/`sequenceNumber` 行が追記され、連番重複が条件式で拒否されることを `awslocal dynamodb query` 等で確認する
+   - (M4以降) DynamoDB Local の DynamoDB に `aggregateIdentifier`/`sequenceNumber` 行が追記され、連番重複が条件式で拒否されることを `aws dynamodb query --endpoint-url http://localhost:8000` 等で確認する
 
 4. 各チェックについて期待結果と実際のレスポンス(ステータス・body)を記録する。
 

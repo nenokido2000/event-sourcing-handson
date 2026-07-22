@@ -14,7 +14,8 @@
 - Java 21 (Corretto) / **Gradle (Kotlin DSL) + Wrapper**
 - Axon Framework 4.x（**4.13+ = Spring Boot 4 対応版**）+ Spring Boot 4.1（`axon-spring-boot-starter`）
   - ※ Spring Boot 4 は Jackson 3 がデフォルト。Axon の Serializer 設定に注意（詳細は `docs/plan.md`）
-- 読みモデル: PostgreSQL / ローカルAWS: LocalStack（DynamoDB + Streams）/ AWS SDK for Java v2
+- 読みモデル: PostgreSQL / ローカルAWS: DynamoDB Local（amazon/dynamodb-local。DynamoDB + Streams）/ AWS SDK for Java v2
+  - ※ LocalStack はライセンス必須化（2026-03）につき不採用。DynamoDB Local は無料・アカウント不要で DynamoDB + Streams に対応。
 
 ## モジュール構成
 - `warehouse-domain` … 集約・コマンド・イベント（純ドメイン）
@@ -22,7 +23,7 @@
 - `warehouse-query` … プロジェクション・読みモデル・クエリハンドラ
 - `warehouse-eventstore-dynamodb` … 自作 `AbstractEventStorageEngine`（M4で追加）
 - `warehouse-app` … Spring Boot起動・REST API
-- `infra` … docker-compose（LocalStack, PostgreSQL）/ `docs` … 分析・設計成果物
+- `infra` … docker-compose（DynamoDB Local, PostgreSQL）/ `docs` … 分析・設計成果物
 
 ## ステアリング（この各機構を使うこと）
 - **Rules** `.claude/rules/` … 設計・実装の遵守ルール。コードを書く前後に必ず参照する。
@@ -46,7 +47,7 @@
 
 ## 動作確認方法（M0以降に充実）
 ```bash
-docker compose -f infra/docker-compose.yml up -d   # LocalStack + PostgreSQL
+docker compose -f infra/docker-compose.yml up -d   # DynamoDB Local + PostgreSQL
 ./gradlew test                                     # 全テスト
 ./gradlew :warehouse-app:bootRun                   # アプリ起動（ポート8080想定）
 ```
