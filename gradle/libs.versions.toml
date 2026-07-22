@@ -1,0 +1,28 @@
+[versions]
+springBoot = "4.1.0"
+axon = "4.13.2"
+
+[libraries]
+# BOM / platform（バージョン集中管理）
+spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
+axon-bom = { module = "org.axonframework:axon-bom", version.ref = "axon" }
+
+# Axon（版は axon-bom が管理）
+axon-modelling = { module = "org.axonframework:axon-modelling" }
+axon-messaging = { module = "org.axonframework:axon-messaging" }
+axon-spring-boot-starter = { module = "org.axonframework:axon-spring-boot-starter" }
+axon-test = { module = "org.axonframework:axon-test" }
+
+# Spring Boot（版は spring-boot-dependencies が管理）
+spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web" }
+spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-starter-data-jpa" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+postgresql = { module = "org.postgresql:postgresql" }
+
+# テスト（版は spring-boot-dependencies が管理）
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+assertj-core = { module = "org.assertj:assertj-core" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }

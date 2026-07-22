@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: warehouse-app
+  # 読みモデル（PostgreSQL）。infra/docker-compose.yml のコンテナに接続する。
+  # ローカル起動時は localhost、M4 でアプリをコンテナ化する際はサービス名 postgres に切替。
+  datasource:
+    url: jdbc:postgresql://localhost:5432/warehouse_read
+    username: warehouse
+    password: warehouse
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+
+server:
+  port: 8080

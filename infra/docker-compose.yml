@@ -1,0 +1,41 @@
+# 倉庫在庫管理 PoC のローカルインフラ。
+#   - DynamoDB Local (amazon/dynamodb-local): DynamoDB + DynamoDB Streams（M4 の自作イベントストア用）
+#     ※ LocalStack はライセンス必須化（2026-03）につき不採用。DynamoDB Local は無料・アカウント不要。
+#   - PostgreSQL: 読みモデル（Query 側プロジェクション）
+# 使い方: docker compose -f infra/docker-compose.yml up -d
+name: warehouse-es
+
+services:
+  dynamodb:
+    image: amazon/dynamodb-local:latest
+    container_name: warehouse-dynamodb
+    # -sharedDb: 全クライアントで単一DBを共有 / -dbPath: 永続化（名前付きボリューム）
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "./data"]
+    working_dir: /home/dynamodblocal
+    ports:
+      - "8000:8000"
+    volumes:
+      - warehouse-dynamodb-data:/home/dynamodblocal/data
+    # 注: 最小 Java イメージのため curl/wget を含まず healthcheck は付けない。
+    #     疎通は `aws dynamodb list-tables --endpoint-url http://localhost:8000` 等で確認する。
+
+  postgres:
+    image: postgres:17
+    container_name: warehouse-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=warehouse
+      - POSTGRES_PASSWORD=warehouse
+      - POSTGRES_DB=warehouse_read
+    volumes:
+      - warehouse-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U warehouse -d warehouse_read"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  warehouse-dynamodb-data:
+  warehouse-pgdata:
