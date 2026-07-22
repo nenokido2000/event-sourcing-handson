@@ -11,7 +11,7 @@
 - イベントストアは **DynamoDB を独自実装で連携**（Axon公式非対応。具体的な実装方式は別途検討）。**Axon Server は使わない**（OSS側のみ）。
 
 ## 技術スタック
-- Java 21 (Corretto) / **Gradle (Kotlin DSL) + Wrapper**
+- Java 25 (Corretto / 現行LTS) / **Gradle (Kotlin DSL) + Wrapper**
 - Axon Framework 4.x（**4.13+ = Spring Boot 4 対応版**）+ Spring Boot 4.1（`axon-spring-boot-starter`）
   - ※ Spring Boot 4 は Jackson 3 がデフォルト。Axon の Serializer 設定に注意（詳細は `docs/plan.md`）
 - 読みモデル: PostgreSQL / ローカルAWS: DynamoDB Local（amazon/dynamodb-local。DynamoDB + Streams）/ AWS SDK for Java v2

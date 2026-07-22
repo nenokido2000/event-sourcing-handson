@@ -9,7 +9,7 @@
 
 | ツール | 用途 | 備考 |
 |---|---|---|
-| **JDK 21**（Amazon Corretto 推奨） | Gradle Wrapper の実行・アプリ実行・IDE の Project SDK | Java 21 固定。**Gradle 本体のインストールは不要**（下記参照） |
+| **JDK 25**（Amazon Corretto 推奨 / 現行LTS） | Gradle Wrapper の実行・アプリ実行・IDE の Project SDK | Java 25 固定。**Gradle 本体のインストールは不要**（下記参照） |
 | **Docker Desktop**（または Docker Engine + Compose v2） | ローカルインフラ（DynamoDB Local / PostgreSQL） | 使う前に起動しておく |
 | **Git** | clone・バージョン管理 | |
 
@@ -30,7 +30,7 @@
 
 | 対象 | バージョン | 定義場所 |
 |---|---|---|
-| Java | 21（toolchain） | ルート `build.gradle.kts` |
+| Java | 25（toolchain / 現行LTS） | ルート `build.gradle.kts` |
 | Gradle | 9.6.1（Wrapper） | `gradle/wrapper/gradle-wrapper.properties` |
 | Spring Boot | 4.1.0 | `gradle/libs.versions.toml` |
 | Axon Framework | 4.13.2 | `gradle/libs.versions.toml` |
@@ -57,7 +57,7 @@ git clone <repository-url>
 cd event-sourcing
 
 # 2) JDK が 21 であることを確認
-java -version        # => openjdk version "21.x" ...
+java -version        # => openjdk version "25.x" ...
 
 # 3) インフラ起動（事前に Docker Desktop を起動しておく）
 docker compose -f infra/docker-compose.yml up -d
@@ -88,7 +88,7 @@ docker compose -f infra/docker-compose.yml ps       # dynamodb / postgres が Up
 ## 6. IntelliJ IDEA の設定
 
 - **Open** で `settings.gradle.kts` を選択（Gradle プロジェクトとしてインポート）。
-- **Project SDK = Corretto 21**（`File → Project Structure → Project`）。
+- **Project SDK = Corretto 25**（`File → Project Structure → Project`）。
 - **Settings → Build Tools → Gradle → "Use Gradle from: `gradle-wrapper.properties`"** に設定（IDE 同梱 Gradle ではなく Wrapper=9.6.1 に揃え、CLI と挙動を一致させる）。
 - `JAVA_HOME` は未設定でも Wrapper / IDE が自動検出するため問題ない。
 
@@ -104,6 +104,6 @@ docker compose -f infra/docker-compose.yml down -v   # データ（DynamoDB/Post
 | 症状 | 原因・対処 |
 |---|---|
 | `Cannot connect to the Docker daemon` | Docker Desktop が未起動。起動してから再実行する。 |
-| `No matching toolchain` / JDK 21 が見つからない旨のエラー | JDK 21 が未導入。Amazon Corretto 21 を入れる（本プロジェクトは toolchain の自動ダウンロードを有効化していないため、21 をローカルに用意する必要がある）。 |
+| `No matching toolchain` / JDK 25 が見つからない旨のエラー | JDK 25 が未導入。Amazon Corretto 25 を入れる（本プロジェクトは toolchain の自動ダウンロードを有効化していないため、25 をローカルに用意する必要がある）。 |
 | ポート競合（8000 / 5432 / 8080） | 既存プロセスを停止するか、compose / `application.yml` のポートを変更する。 |
 | 初回 `./gradlew` が遅い | Gradle 配布物と依存の初回 DL。2 回目以降は `~/.gradle` キャッシュで高速化する。 |
