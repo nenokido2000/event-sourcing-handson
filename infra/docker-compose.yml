@@ -24,6 +24,9 @@ services:
     container_name: warehouse-postgres
     ports:
       - "5432:5432"
+    # 注: 以下はローカル開発専用のダミー値。localhost に閉じたコンテナで本番クレデンシャルではない。
+    #     setup.md / application.yml と値を一致させることで clone 後すぐ動く再現性を優先しており、
+    #     .env への切り出しは意図的に行っていない（本物の秘密情報は決してコミットしないこと）。
     environment:
       - POSTGRES_USER=warehouse
       - POSTGRES_PASSWORD=warehouse
