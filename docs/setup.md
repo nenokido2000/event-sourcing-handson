@@ -56,7 +56,7 @@
 git clone <repository-url>
 cd event-sourcing
 
-# 2) JDK が 21 であることを確認
+# 2) JDK が 25 であることを確認
 java -version        # => openjdk version "25.x" ...
 
 # 3) インフラ起動（事前に Docker Desktop を起動しておく）
