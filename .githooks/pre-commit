@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#
+# pre-commit: ステージ済み差分に混入した機密（AWSキー/トークン/秘密鍵等）を gitleaks で検出しコミットを止める。
+# 有効化: リポジトリルートで `git config core.hooksPath .githooks`（初回のみ / clone 後も各自で実行）。
+# 一時回避（原則使わない）: `git commit --no-verify`
+#
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "❌ pre-commit: gitleaks が未インストールのため機密スキャンを実行できません。" >&2
+  echo "   インストール: brew install gitleaks" >&2
+  echo "   （どうしても回避する場合のみ: git commit --no-verify）" >&2
+  exit 1
+fi
+
+# --staged: ステージ済み差分のみ走査（pre-commit 用） / --redact: 検出値をログに出さない
+if ! gitleaks git --staged --redact --no-banner --verbose; then
+  echo "" >&2
+  echo "❌ pre-commit: 機密の疑いがある内容が検出されました。上記箇所を確認し、コミットから除外してください。" >&2
+  echo "   誤検出の場合は .gitleaks.toml の allowlist で除外できます。" >&2
+  exit 1
+fi

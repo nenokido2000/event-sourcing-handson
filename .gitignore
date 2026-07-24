@@ -34,3 +34,34 @@ bin/
 # === LocalStack / infra 実行時データ ===
 .localstack/
 volume/
+
+# === Terraform（M8）===
+# state は平文で秘密を含むため絶対に追跡しない
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl  # ※ 追跡したくなったらこの行を削除（通常はコミット推奨だが本PoCでは当面除外）
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# tfvars は秘密が入りやすいので除外。共有用サンプルは *.example として追跡する
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# === 秘密・資格情報（混入防止）===
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*_rsa
+*_rsa.pub
+.aws/
+aws-credentials*
+credentials
+*.p12
+*.pfx

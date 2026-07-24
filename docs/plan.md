@@ -89,6 +89,7 @@ event-sourcing/
   - 外側(ATDD): まず `specs/` に Gauge の Markdown Spec（受入→引当→出荷、過剰引当の拒否…）を書き、`warehouse-atdd` に Playwright(request) で REST を叩くステップ実装を用意 → 失敗させる（Red）。**ハーネスは薄いハッピーパス1本で立ち上げ**、Spec の作り込みはドメインの形が見えてから増やす（本丸を先に固める）。
   - 内側(TDD): 集約・値オブジェクトを Axon Fixture / JUnit で**テスト先行**（Red→Green→Refactor）。不変条件 `available≥0` の異常系も先に書く。
   - 内側が揃うと外側の受入 Spec が緑に到達 → 垂直スライス完成。この二重ループを以降のMでも踏襲する。
+  - ⚑ **この段の前後で「ガード整備 #2（TDD/ATDD遵守ゲート）」を実施**（skill の test-first 既定化・レビュアーのチェックリスト追加・Stop フックのテスト不在チェック）。詳細は「ガード / 品質ゲートの整備」節。
 - **M3+ — ドメイン改修シナリオ（任意 / オプショナル）**: 最初の動くスライス（M3）完了後に、「特定ドメインへの**ビジネス要求変更**」を1つ置き、実務に即した開発プロセス（ATDD で Spec 先行 → TDD で駆動）で改修する。**ES/CQRS の旨味は変更に直面して初めて出る**（不変イベントを保ったまま後方互換・履歴活用）ため、これは (A) 概念体得の最深部を兼ねる。
   - **位置づけ**: いつ落としても破綻しない任意ステップ。既存の `InventoryItem` 集約を舞台にし、**新BCは増やさず「よく選ばれた1変更」に絞る**。組み込みストア期（M3直後）に置き、改修をドメイン/ESの純粋問題に隔離する。同じ改修は M4（DynamoDB）/ M5（5.x）で**再演**すると「同じ変更が別インフラでどう効くか」まで見える（M5 の 4.x→5.x は"プラットフォーム変更"の従兄弟）。
   - **選定基準**: ES 特有の筋肉を突く変更を選ぶ（一般的なフィールド追加＝CRUD練習に留めない）。候補と鍛える筋肉: ①新プロジェクション追加（履歴から再構築＝読みモデル使い捨て）②不変条件/ポリシー変更（引当ポリシーの現実的な揺らぎ）③**イベントのスキーマ進化（リビジョン＋アップキャスタ、旧イベントは書き換えない）** ④補正/打ち消しイベント（削除せず訂正）。**既定候補=③スキーマ進化（アップキャスタ）**。ES の「削除しない・後方互換」を最も鋭く突くため。
@@ -102,6 +103,7 @@ event-sourcing/
   - **IaC**: `infra/terraform/` に AWS 構成を Terraform で記述（モジュール分割の目安: `network`(VPC/サブネット/SG) / `data`(DynamoDB＋Streams, RDS PostgreSQL) / `compute`(ECR, ECS Fargate サービス, ALB) / `streams`(Lambda＋イベントソースマッピング) / IAM・Secrets Manager・CloudWatch）。tfstate はまず local、必要なら S3＋DynamoDB ロックへ。
   - **アプリ側の本番化**: Spring プロファイル（`local`/`aws`）で DynamoDB エンドポイント・資格情報・DB接続を切替。コンテナを ECR へ push。
   - **Streams 消費の置換**: ローカル(M4)の「素の SDK v2 ポーリング」を、AWS では **DynamoDB Streams → Lambda → RDS 投影**に置換（本番パターンへ寄せる）。両者が同じ投影結果を作ることを確認。
+  - ⚑ **着手前に「ガード整備 #3（デプロイ/クレデンシャル本番ガード）」を実施**（SSO/OIDC＋Secrets Manager＋S3暗号化リモートstate、CIのgitleaks＋push protection）。詳細は「ガード / 品質ゲートの整備」節。
   - **成果物**: `docs/aws-deploy.md`（構成図・手順・コスト注意・`terraform destroy` での撤去手順）。
 
 ## 検証（各段のエンドツーエンド確認）
@@ -112,6 +114,21 @@ event-sourcing/
 - M8: `terraform apply` で AWS に一式構築 → 同RESTシナリオ（受入→引当→出荷）を**本番の Gauge Spec（環境変数でエンドポイント差替）**で緑にする → 実 DynamoDB に追記・楽観ロックが効き、Streams→Lambda→RDS の投影が更新されることを確認 → `terraform destroy` で撤去できることまで確認。
 - ATDD（全M共通）: `specs/` の Markdown Spec が受入基準の正。ローカルでは `docker compose up` 済みアプリに、AWSでは ALB エンドポイントに、同じ Spec を向けて緑を確認する。
 - M3+（任意）: 改修シナリオ実施後、**既存の受入 Spec/Fixture テストが緑のまま**（回帰なし）で新 Spec が緑になること、既定候補③なら**旧リビジョンのイベントがアップキャスタ経由で正しく読めること**（旧イベントは書き換わっていないこと）を確認。
+
+## ガード / 品質ゲートの整備（段階導入・忘備）
+
+機密混入と TDD/ATDD 遵守を「機構」で担保する。原則: **決定的に検出できるもの（機密混入・テスト不在/失敗）は決定的機構（pre-commit / hook / CI）で強制。プロセス（test-first 等）は skill 既定＋レビューで誘導**（強制不能なものを hook で強制しようとしない）。認知負荷(A優先)を考え、安い順・必要になる直前で足す。
+
+- **#1 機密混入ガード（済 / 2026-07-25 導入）**: `.gitignore` に Terraform state/tfvars・`.env`・秘密鍵等を追加。`gitleaks` を **pre-commit フック（`.githooks/pre-commit`, `core.hooksPath=.githooks`）** で走らせ、ステージ差分の機密を検出しコミットを停止（fail-closed）。手順は `docs/setup.md` 4.5。
+- **#2 TDD/ATDD 遵守ゲート（M3 前後で実施）**:
+  - `add-aggregate` skill を **test-first の既定動作**に（①失敗するFixtureを生成→②`gradlew test`で赤を見せる→③最小実装で緑→④整理）。`add-projection` も同様。
+  - **レビューゲート（es-domain-reviewer）のチェックリストに TDD/ATDD 項目を追加**（各振る舞いにテストがあるか／実装詳細でなく振る舞いを検証しているか／不変条件違反の異常系を `expectException` しているか／受入 Spec が存在するか）。
+  - 既存 **Stop フック（`./gradlew test`＋レビューゲート）**に軽い追加: 新規 `*Aggregate.java` に対応する `*Test.java` が無ければ block（＝*テスト不在*を弾く。test-first そのものは機械検証不能なので代理指標）。
+  - ATDD の Gauge/Playwright はアプリ起動が要り重いので Stop フックには載せず **CI 側**で回す（下記 #3 と合流）。ローカルは Spec 存在チェック程度に留める。
+- **#3 デプロイ/クレデンシャルの本番ガード（M8 直前で実施）**:
+  - **構造的回避**（最優先）: AWS **SSO/OIDC の短命クレデンシャル**を使い静的キーを作らない。RDS パスワード等は **Secrets Manager / SSM**。**S3 リモート state（暗号化＋バケット非公開）＋ DynamoDB ロック**にして tfstate を repo に落とさない（M8 の「local か S3 か」はこの方針で S3 に倒す）。
+  - **CI バックストップ**: GitHub Actions に **gitleaks ジョブ**（`--no-verify` 抜け対策）＋ **GitHub secret scanning / push protection 有効化**。ATDD 全 Spec もここで実行。
+  - （任意）Claude PreToolUse hook で `Edit/Write(*.tf)`・`Bash(git commit)` 時に速報スキャン（本命は pre-commit + CI、これは速報の補助）。
 
 ## 未決・後続で判断（ブロッカーではない）
 - PHPフレームワークの具体選定（M7）。

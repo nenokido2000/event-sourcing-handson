@@ -20,6 +20,7 @@
 | IntelliJ IDEA | 推奨 IDE（ハンズオン・ステップ実行） | 他の IDE / エディタでも可 |
 | AWS CLI | DynamoDB の中身確認 | `aws --endpoint-url http://localhost:8000 ...`。アプリの AWS SDK v2 や IDE でも代替可（M4 で欲しくなったら導入） |
 | PostgreSQL クライアント（`psql`） | 読みモデルの確認 | `docker exec warehouse-postgres psql ...` / IntelliJ の Database ツール |
+| **gitleaks** | pre-commit の機密混入スキャン（下記 4.5） | `brew install gitleaks`。**コミットするなら実質必須**（フックが未導入時はコミットを止める） |
 
 ### 入れなくてよいもの（意図的に不要）
 
@@ -72,6 +73,26 @@ docker compose -f infra/docker-compose.yml ps       # dynamodb / postgres が Up
 # 6) （M3 以降）アプリ起動
 ./gradlew :warehouse-app:bootRun                    # http://localhost:8080
 ```
+
+## 4.5 機密混入ガード（pre-commit / gitleaks）
+
+AWS キー・トークン・秘密鍵などが誤ってコミットされるのを防ぐため、`gitleaks` によるステージ差分スキャンを pre-commit フックで実行する。フック本体は `.githooks/pre-commit`（リポジトリで追跡）。`core.hooksPath` はローカル設定で追跡されないため、**clone 後に一度だけ各自で有効化**する。
+
+```bash
+# 1) gitleaks を導入（未導入だとフックがコミットを止める＝fail-closed）
+brew install gitleaks
+
+# 2) フックを有効化（このリポジトリでのみ有効。1回だけ）
+git config core.hooksPath .githooks
+
+# 3) 動作確認（何もステージしていなければ "no leaks found" で通る）
+.githooks/pre-commit
+```
+
+- 検出されるとコミットは中断する。該当箇所を除外して再コミットする。
+- 誤検出はリポジトリルートの `.gitleaks.toml`（allowlist）で除外できる（現状は未使用）。
+- どうしても回避が必要な場面のみ `git commit --no-verify`（原則使わない）。
+- Terraform の `*.tfstate` / `*.tfvars` / `.env` / 秘密鍵などは `.gitignore` でも二重に除外済み（M8 の実クレデンシャル対策の下地）。
 
 ## 5. 動作確認（期待される結果）
 
