@@ -19,7 +19,7 @@
 |---|---|---|
 | IntelliJ IDEA | 推奨 IDE（ハンズオン・ステップ実行） | 他の IDE / エディタでも可 |
 | AWS CLI | DynamoDB の中身確認 | `aws --endpoint-url http://localhost:8000 ...`。アプリの AWS SDK v2 や IDE でも代替可（M4 で欲しくなったら導入） |
-| PostgreSQL クライアント（`psql`） | 読みモデルの確認 | `docker exec warehouse-postgres psql ...` / IntelliJ の Database ツール |
+| PostgreSQL クライアント（`psql`） | リードモデルの確認 | `docker exec warehouse-postgres psql ...` / IntelliJ の Database ツール |
 | **gitleaks** | pre-commit の機密混入スキャン（下記 4.5） | `brew install gitleaks`。**コミットするなら実質必須**（フックが未導入時はコミットを止める） |
 
 ### 入れなくてよいもの（意図的に不要）
@@ -103,7 +103,7 @@ git config core.hooksPath .githooks
 | DynamoDB Local | `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000` | `400`（素の GET を弾く応答＝サービス起動中の証拠） |
 | PostgreSQL | `docker exec warehouse-postgres pg_isready -U warehouse -d warehouse_read` | `accepting connections` |
 
-読みモデル DB の接続情報（`application.yml` と一致）:
+リードモデル DB の接続情報（`application.yml` と一致）:
 `host=localhost / port=5432 / db=warehouse_read / user=warehouse / password=warehouse`
 
 ## 6. IntelliJ IDEA の設定

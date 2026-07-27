@@ -42,13 +42,13 @@
   - Spring Boot 4.1 は2026-06リリースの現行推奨版（公式LTS designation は無い）。3.x系はOSSサポート終了済み（**3.5 が 2026-06-30 EOL**）、OSSアクティブは 4.0（〜2026-12-31）/ 4.1（〜2027-07-31）のみで **4.1 が最長** → 実質4.1一択。
   - **Axon 4 が Spring Boot 4 に対応したのは 4.13 から**（4.12不可）。4.13は「4→5移行の踏み石」版で Spring Boot 4 統合が主眼 → M5の4→5移行がむしろ楽になる。
   - **Spring Boot 4 は Jackson 3 デフォルト**。Axon の JacksonSerializer は元々 Jackson 2 前提だったため、Serializer 設定（Jackson 3 対応 or 明示指定）に注意。JDK 17+ 要件（Java 25 で充足）。
-- 読みモデル(Query側): **PostgreSQL**（ローカル=Docker / AWS=RDS for PostgreSQL）
+- リードモデル(Query側): **PostgreSQL**（ローカル=Docker / AWS=RDS for PostgreSQL）
 - イベントストア: 段階導入（M3=組み込み → M4=DynamoDB自作）
 - ローカルAWS: **DynamoDB Local**（`amazon/dynamodb-local`。DynamoDB + DynamoDB Streams）。AWS SDK for Java v2。※LocalStackはライセンス必須化（2026-03、アカウント+auth token必須）につき不採用。DynamoDB Localは無料・アカウント不要で本PoCに必要なDynamoDB+Streamsを満たす。
 - **テスト/開発手法**:
   - TDD: JUnit 5 ＋ Axon `AggregateTestFixture`（集約）/ 値オブジェクトは素の JUnit。**テストを先に書く**運用。
   - ATDD: **Gauge**（`gauge-java` プラグイン、仕様は Markdown）＋ **Playwright for Java**（`APIRequestContext` で REST をヘッドレス実行。ブラウザ/UIは用意しない）。Spec は生きたドキュメントとして `specs/` に置く。
-- **本番インフラ / IaC（M8）**: **Terraform**。AWS 構成 = **ECS Fargate**（Spring Boot コンテナ）＋ **ALB** ＋ **RDS for PostgreSQL**（読みモデル）＋ **DynamoDB＋DynamoDB Streams**（実イベントストア）＋ **Lambda**（Streams 消費→RDS 投影）。付随: ECR / VPC・サブネット / IAM / Secrets Manager / CloudWatch Logs。※学習用のため未使用時は `terraform destroy` で撤去する前提。
+- **本番インフラ / IaC（M8）**: **Terraform**。AWS 構成 = **ECS Fargate**（Spring Boot コンテナ）＋ **ALB** ＋ **RDS for PostgreSQL**（リードモデル）＋ **DynamoDB＋DynamoDB Streams**（実イベントストア）＋ **Lambda**（Streams 消費→RDS 投影）。付随: ECR / VPC・サブネット / IAM / Secrets Manager / CloudWatch Logs。※学習用のため未使用時は `terraform destroy` で撤去する前提。
 
 ## アーキテクチャ方針（倉庫）
 - **境界づけられたコンテキスト**: Inventory(コア) / Receiving / Fulfillment / Stocktaking。上流に Ordering(薄い外部トリガ)。
@@ -73,7 +73,7 @@ event-sourcing/
   infra/terraform/               # M8で追加: AWS本番のIaC（VPC/ECS/ALB/RDS/DynamoDB/Lambda/ECR…をモジュール分割）
   warehouse-domain/              # 集約・コマンド・イベント（純ドメイン）
   warehouse-command/             # コマンドハンドラ・Axon設定
-  warehouse-query/               # プロジェクション・読みモデル・クエリハンドラ
+  warehouse-query/               # プロジェクション・リードモデル・クエリハンドラ
   warehouse-eventstore-dynamodb/ # M4で追加: AbstractEventStorageEngine のDynamoDB実装
   warehouse-app/                 # Spring Boot起動・REST API
   warehouse-atdd/                # M3で追加: Gauge のステップ実装（Java）＋ Playwright(request) ランナー
@@ -92,7 +92,7 @@ event-sourcing/
   - ⚑ **この段の前後で「ガード整備 #2（TDD/ATDD遵守ゲート）」を実施**（skill の test-first 既定化・レビュアーのチェックリスト追加・Stop フックのテスト不在チェック）。詳細は「ガード / 品質ゲートの整備」節。
 - **M3+ — ドメイン改修シナリオ（任意 / オプショナル）**: 最初の動くスライス（M3）完了後に、「特定ドメインへの**ビジネス要求変更**」を1つ置き、実務に即した開発プロセス（ATDD で Spec 先行 → TDD で駆動）で改修する。**ES/CQRS の旨味は変更に直面して初めて出る**（不変イベントを保ったまま後方互換・履歴活用）ため、これは (A) 概念体得の最深部を兼ねる。
   - **位置づけ**: いつ落としても破綻しない任意ステップ。既存の `InventoryItem` 集約を舞台にし、**新BCは増やさず「よく選ばれた1変更」に絞る**。組み込みストア期（M3直後）に置き、改修をドメイン/ESの純粋問題に隔離する。同じ改修は M4（DynamoDB）/ M5（5.x）で**再演**すると「同じ変更が別インフラでどう効くか」まで見える（M5 の 4.x→5.x は"プラットフォーム変更"の従兄弟）。
-  - **選定基準**: ES 特有の筋肉を突く変更を選ぶ（一般的なフィールド追加＝CRUD練習に留めない）。候補と鍛える筋肉: ①新プロジェクション追加（履歴から再構築＝読みモデル使い捨て）②不変条件/ポリシー変更（引当ポリシーの現実的な揺らぎ）③**イベントのスキーマ進化（リビジョン＋アップキャスタ、旧イベントは書き換えない）** ④補正/打ち消しイベント（削除せず訂正）。**既定候補=③スキーマ進化（アップキャスタ）**。ES の「削除しない・後方互換」を最も鋭く突くため。
+  - **選定基準**: ES 特有の筋肉を突く変更を選ぶ（一般的なフィールド追加＝CRUD練習に留めない）。候補と鍛える筋肉: ①新プロジェクション追加（履歴から再構築＝リードモデル使い捨て）②不変条件/ポリシー変更（引当ポリシーの現実的な揺らぎ）③**イベントのスキーマ進化（リビジョン＋アップキャスタ、旧イベントは書き換えない）** ④補正/打ち消しイベント（削除せず訂正）。**既定候補=③スキーマ進化（アップキャスタ）**。ES の「削除しない・後方互換」を最も鋭く突くため。
   - **具体シナリオは M2（戦術設計）後に確定**する（分析から自然に浮かぶ変更点を採る。今は置き場所と選定基準のみ固定）。
   - **ATDD の勘所**: 要求変更＝Spec を先に足す/変える → **既存 Spec は緑のまま（回帰の安全網）**、新 Spec が変更を駆動する。改修時こそ ATDD が最も効く。
 - **M4 — 自作DynamoDBイベントストア (4.x)**: `AbstractEventStorageEngine` をDynamoDBで実装。投影をDynamoDB Streams駆動へ切替。DynamoDB Localで一気通貫。← AWS制約を満たす山場。

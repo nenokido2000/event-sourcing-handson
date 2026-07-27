@@ -31,7 +31,7 @@ Axon Framework と DynamoDB を題材に、複数ドメイン・複数言語で�
 |---|---|
 | 言語 / ビルド | Java 25 (Corretto / 現行LTS) / Gradle (Kotlin DSL) + Wrapper |
 | フレームワーク | Axon Framework 4.13+（Spring Boot 4 対応 / → 5.x）/ Spring Boot 4.1 |
-| 読みモデル (Query 側) | PostgreSQL |
+| リードモデル (Query 側) | PostgreSQL |
 | イベントストア | 組み込み（初期）→ DynamoDB 独自実装（本命） |
 | ローカル AWS | DynamoDB Local（amazon/dynamodb-local。DynamoDB + DynamoDB Streams）/ AWS SDK for Java v2 |
 
@@ -47,7 +47,7 @@ event-sourcing-handson/
 ├── infra/                          # docker-compose（DynamoDB Local, PostgreSQL）※M0で追加
 ├── warehouse-domain/               # 集約・コマンド・イベント（純ドメイン）※M3で追加
 ├── warehouse-command/              # コマンドハンドラ・Axon 設定
-├── warehouse-query/                # プロジェクション・読みモデル・クエリハンドラ
+├── warehouse-query/                # プロジェクション・リードモデル・クエリハンドラ
 ├── warehouse-eventstore-dynamodb/  # 自作 AbstractEventStorageEngine ※M4で追加
 └── warehouse-app/                  # Spring Boot 起動・REST API
 ```

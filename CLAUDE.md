@@ -14,13 +14,13 @@
 - Java 25 (Corretto / 現行LTS) / **Gradle (Kotlin DSL) + Wrapper**
 - Axon Framework 4.x（**4.13+ = Spring Boot 4 対応版**）+ Spring Boot 4.1（`axon-spring-boot-starter`）
   - ※ Spring Boot 4 は Jackson 3 がデフォルト。Axon の Serializer 設定に注意（詳細は `docs/plan.md`）
-- 読みモデル: PostgreSQL / ローカルAWS: DynamoDB Local（amazon/dynamodb-local。DynamoDB + Streams）/ AWS SDK for Java v2
+- リードモデル: PostgreSQL / ローカルAWS: DynamoDB Local（amazon/dynamodb-local。DynamoDB + Streams）/ AWS SDK for Java v2
   - ※ LocalStack はライセンス必須化（2026-03）につき不採用。DynamoDB Local は無料・アカウント不要で DynamoDB + Streams に対応。
 
 ## モジュール構成
 - `warehouse-domain` … 集約・コマンド・イベント（純ドメイン）
 - `warehouse-command` … コマンドハンドラ・Axon設定
-- `warehouse-query` … プロジェクション・読みモデル・クエリハンドラ
+- `warehouse-query` … プロジェクション・リードモデル・クエリハンドラ
 - `warehouse-eventstore-dynamodb` … 自作 `AbstractEventStorageEngine`（M4で追加）
 - `warehouse-app` … Spring Boot起動・REST API
 - `infra` … docker-compose（DynamoDB Local, PostgreSQL）/ `docs` … 分析・設計成果物
@@ -31,7 +31,7 @@
 - **Skills** `.claude/skills/`
   - `event-storming` … ドメイン分析を進め `docs/` に成果物を書き出す（分析フェーズで使用）
   - `add-aggregate` … 集約一式（コマンド/イベント/集約/Fixtureテスト）を規約準拠で雛形生成
-  - `add-projection` … 読みモデル＋プロジェクション＋クエリハンドラ＋テストを雛形生成
+  - `add-projection` … リードモデル＋プロジェクション＋クエリハンドラ＋テストを雛形生成
 - **SubAgents** `.claude/agents/`
   - `es-domain-reviewer` … `.claude/rules/` 準拠をレビュー（Stopフックのゲート。`run_in_background:false` で呼ぶ）
   - `es-poc-tester` … 起動済みアプリに REST を叩き実地確認（M4以降は DynamoDB 行も検査）
