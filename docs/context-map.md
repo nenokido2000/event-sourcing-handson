@@ -36,7 +36,7 @@ graph TB
 | 調達（Procurement） → 入荷（Receiving） | Upstream/Downstream（外部） | 外部トリガ「発注が確定した」 | 内製しない。薄く受ける |
 | 受注（Ordering） → 在庫（Inventory） | Upstream/Downstream（外部） | 外部イベント「受注が受け付けられた」→ 引当ポリシー P2 | 本PoCのコア入力。上流は薄い外部トリガ |
 | 入荷（Receiving） → 在庫（Inventory） | **Partnership**（同一倉庫チーム） | ポリシー P1（在庫が格納された→在庫を計上する） | 格納で在庫をコアへ供給。2集約またぎの結果整合 |
-| 在庫（Inventory） → 出荷（Fulfillment） | Customer/Supplier（出荷=下流） | 出荷は👤アクター駆動（ピッキング/出荷）＋ポリシー P3 で在庫へ出庫反映（H7） | 引当を消化して出荷 |
+| 在庫（Inventory） → 出荷（Fulfillment） | Customer/Supplier（出荷=下流） | 出荷は👤アクター駆動（ピッキング/出荷）＋ポリシー P3（在庫がピッキングされた→在庫を払い出す） | 引当を消化して出荷 |
 | 棚卸（Stocktaking） → 在庫（Inventory） | Upstream/Downstream | ポリシー P4（在庫差異が記録された→在庫を調整する） | 実地差異を補正イベントで反映 |
 
 ## サブドメイン分類（投資配分の指針）

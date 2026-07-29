@@ -32,14 +32,15 @@ H1〜H6 の決定から、整合性境界（不変条件を守る最小単位）
 | 在庫を計上する（`PlaceStock`） | ポリシーP1（格納伝播） | 在庫が計上された（`StockPlaced`） | — | 手持在庫↑・引当可能化。格納の在庫（Inventory）側の帰結 |
 | 引き当てる（`AllocateStock`） | ポリシーP2（引当） | 在庫が引き当てられた（`StockAllocated`） | 引当可能在庫ビュー（`AvailableStockView`） | 引当可能 ≥ 要求量 の時のみ。違反は例外（イベント発行せず） |
 | 引当を解除する（`DeallocateStock`） | 引当取消/期限切れ | 引当が解除された（`StockDeallocated`） | 引当ビュー（`AllocationView`） | 取消・タイムアウト等 |
+| 在庫を払い出す（`IssueStock`） | ポリシーP3（出庫反映） | 在庫が払い出された（`StockIssued`） | — | ピッキングの帰結。手持在庫↓・引当済↓（同額ずつ減るので引当可能は不変）。**H7確定** |
 | 在庫を調整する（`AdjustStock`） | ポリシーP4（棚卸調整） | 在庫が調整された（`StockAdjusted`） | — | 手持在庫を実地値へ補正（増減両方） |
 
 ### 出荷コンテキスト（Fulfillment）— 出荷集約（`Shipment`）
 | コマンド | アクター/起点 | 生成イベント | 参照リードモデル | 備考 |
 |---|---|---|---|---|
-| 出荷を指示する（`RequestShipment`）❓H9 | 外部トリガ or 出荷計画 | 出荷が指示された（`ShipmentRequested`） | 引当ビュー（`AllocationView`） | PoC では上流からの薄い外部トリガとして扱う（暫定） |
-| ピッキングする（`PickStock`） | ピッキング担当 | 在庫がピッキングされた（`StockPicked`） | ピックリストビュー | 物理的に棚から取る。**H7**: ここで手持在庫↓・引当済↓（暫定既定） |
-| 出荷する（`ShipStock`） | 出荷担当 | 在庫が出荷された（`StockShipped`） | — | 出荷完了の事実。**H7**: 在庫の数量はピッキングで確定済み（暫定既定） |
+| 出荷を指示する（`RequestShipment`） | 外部トリガ | 出荷が指示された（`ShipmentRequested`） | 引当ビュー（`AllocationView`） | 上流からの薄い外部トリガ・**注文単位**（**H9確定**） |
+| ピッキングする（`PickStock`） | ピッキング担当 | 在庫がピッキングされた（`StockPicked`） | ピックリストビュー | 物理的に棚から取る。在庫側の残高はポリシー P3 が減らす（**H7確定**） |
+| 出荷する（`ShipStock`） | 出荷担当 | 在庫が出荷された（`StockShipped`） | — | 出荷完了の事実のみ。在庫の残高はピッキングで確定済み（**H7確定**） |
 
 ### 棚卸コンテキスト（Stocktaking）— 棚卸集約（`Stocktake`）
 | コマンド | アクター | 生成イベント | 参照リードモデル | 備考 |
@@ -55,7 +56,7 @@ H1〜H6 の決定から、整合性境界（不変条件を守る最小単位）
 |---|---|---|---|---|
 | **P1 格納伝播（PutawayProcess）** | 在庫が格納された（`StockPutAway`／入荷） | 在庫を計上する（`PlaceStock`／在庫） | 入荷 → 在庫 | 入荷集約から在庫集約へ在庫を移す |
 | **P2 引当（AllocationPolicy）★コア** | 「受注が受け付けられた」（外部） | 引き当てる（`AllocateStock`／在庫） | 受注（Ordering・外部） → 在庫 | 引当可能在庫ビューを見て引当先ロケーションを選定・引当 |
-| **P3 出庫反映（FulfillmentProcess）** | 在庫がピッキングされた（`StockPicked`／出荷） | （在庫の数量を減らすコマンド）※H7 | 出荷 → 在庫 | ピッキングを在庫へ反映（手持在庫↓・引当済↓）。**具体はH7でM2確定**。※`PickStock`/`ShipStock` 自体は👤アクター駆動でポリシーではない |
+| **P3 出庫反映（FulfillmentProcess）** | 在庫がピッキングされた（`StockPicked`／出荷） | 在庫を払い出す（`IssueStock`／在庫） | 出荷 → 在庫 | ピッキングを在庫へ反映（手持在庫↓・引当済↓）。P1と対称の出口側。※`PickStock`/`ShipStock` 自体は👤アクター駆動でポリシーではない |
 | **P4 棚卸調整（AdjustmentPolicy）** | 在庫差異が記録された（`StockDiscrepancyRecorded`／棚卸） | 在庫を調整する（`AdjustStock`／在庫） | 棚卸 → 在庫 | 実地差異を在庫へ反映（補正） |
 
 ## プロセス全体図（👤アクター/↩外部 →（📄リードモデル参照）→ 🟦コマンド →〔集約〕→ 🟧イベント →💜ポリシー）
@@ -101,6 +102,7 @@ flowchart TB
     C_ALLOC["引き当てる<br/>(AllocateStock)"]:::cmd
     C_DEALLOC["引当を解除する<br/>(DeallocateStock)"]:::cmd
     C_PICK["ピッキングする<br/>(PickStock)"]:::cmd
+    C_ISSUE["在庫を払い出す<br/>(IssueStock)"]:::cmd
     C_SHIP["出荷する<br/>(ShipStock)"]:::cmd
     C_STK["棚卸を開始する<br/>(StartStocktake)"]:::cmd
     C_CNT["カウントする<br/>(CountStock)"]:::cmd
@@ -109,6 +111,7 @@ flowchart TB
     %% ── ポリシー（💜・自動反応）──
     P1{{"💜 P1 格納伝播"}}:::pol
     P2{{"💜 P2 引当ポリシー ★コア"}}:::pol
+    P3{{"💜 P3 出庫反映"}}:::pol
     P4{{"💜 P4 棚卸調整"}}:::pol
 
     %% ── 集約（整合性境界）＝サブグラフ ──
@@ -120,6 +123,7 @@ flowchart TB
       E_PLACE["在庫が計上された<br/>(StockPlaced)<br/>手持在庫↑・引当可能化"]:::evt
       E_ALLOC["在庫が引き当てられた<br/>(StockAllocated)"]:::evt
       E_DEALLOC["引当が解除された<br/>(StockDeallocated)"]:::evt
+      E_ISSUE["在庫が払い出された<br/>(StockIssued)<br/>手持在庫↓・引当済↓"]:::evt
       E_ADJ["在庫が調整された<br/>(StockAdjusted)<br/>手持在庫補正"]:::evt
     end
     subgraph AG_SHIP["🚚 出荷 Shipment"]
@@ -152,7 +156,7 @@ flowchart TB
     RM_PICK -.参照.-> A_PICK
     A_PICK --> C_PICK --> E_PICK
     E_PICK --> A_SHIP --> C_SHIP --> E_SHIP
-    E_PICK -. 手持在庫↓・引当済↓を在庫へ反映(H7・M2確定) .-> AG_INV
+    E_PICK --> P3 --> C_ISSUE --> E_ISSUE
 
     %% ── 棚卸（人＋自動）──
     A_STK --> C_STK --> E_STKSTART
@@ -181,6 +185,7 @@ flowchart TB
 | **引き当てる ★コア** | 💜P2 引当ポリシー | 自動 | 引当可能在庫ビュー |
 | 引当を解除する | ↩注文取消 / 期限切れ | 外部・タイマー | — |
 | ピッキングする / 出荷する | 👤ピッキング担当 / 👤出荷担当 | 人の判断 | ピックリスト |
+| 在庫を払い出す | 💜P3 出庫反映 | 自動 | — |
 | 棚卸を開始する / カウントする | 👤棚卸責任者 / 👤棚卸担当 | 人の判断 | 在庫元帳(帳簿値) |
 | 在庫を調整する | 💜P4 棚卸調整 | 自動 | — |
 
@@ -188,8 +193,12 @@ flowchart TB
 
 ## この段で解けた / 残した論点
 - **H6 解決**: 受入は `InboundReceipt` 集約、格納(putaway)で `InventoryItem` へ移す（ポリシー P1）。→ ③で BC 境界に反映。
-- **H7 暫定既定**（M2戦術で確定）: `AllocateStock` で引当済↑（引当可能≥要求量が条件）。`StockPicked` で手持在庫↓・引当済↓（棚から出て予約が消化）。`StockShipped` は出荷完了の事実で在庫の数量はピッキングで確定済み。→ *別案*: 出荷で手持在庫↓にまとめる。M2 で確定。
-- **H9 暫定既定**: `ShipmentRequested` は上流からの薄い外部トリガ扱い（PoC簡素化）。将来 出荷（Fulfillment）側の出荷計画ポリシーへ格上げ可。
+- **H7 解決**（2026-07-29 確定）: `AllocateStock` で引当済↑（引当可能≥要求量が条件）。**ピッキング時**に在庫の 手持在庫↓・引当済↓（ポリシー P3 →`IssueStock`／`StockIssued`）。`StockShipped` は出荷完了の事実のみで残高は動かさない。
+  - *決め手*: 在庫集約の識別子は `(Sku, LocationId)` ＝ **棚1マスの残高**なので、棚から物が出た瞬間に減るのが定義上正しい。出荷時にまとめて減らす別案だと「棚に無いのに手持在庫が残る」期間が生じ、棚卸で偽の差異が立つ。
+  - 手持在庫・引当済が**同額ずつ**減るので**引当可能は不変**＝コアの不変条件に影響しない。
+- **H9 解決**（2026-07-29 確定）: `ShipmentRequested` は上流からの薄い**外部トリガ**のまま。出荷は**注文単位**。
+  - *根拠*: 実務の多数派は**ウェーブ方式**（受注をまとめて作業へ解放＝出荷指示 → ピッキング → 検品 → 出荷）で、**順序は本モデルと一致**する。多数派と異なるのは粒度（注文単位か複数注文の束か）のみ。
+  - バッチ（ウェーブ／配送便）単位は **M3+ 改修シナリオ候補**へ（既存イベントを書き換えずに新集約＋ポリシーを足すだけで実現でき、ESの旨味の実演になる）。
 - **H8 保留**: `StockInspected` の独立化は未決（Received/PutAway に内包する簡素案が既定寄り）。
 - **H5 保留**: `StockMoved`（ロケーション間移動）は M3+ 改修シナリオ候補（P1 と同型の2集約またぎ）。
 
