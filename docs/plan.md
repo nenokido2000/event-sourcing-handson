@@ -51,7 +51,7 @@
 - **本番インフラ / IaC（M8）**: **Terraform**。AWS 構成 = **ECS Fargate**（Spring Boot コンテナ）＋ **ALB** ＋ **RDS for PostgreSQL**（リードモデル）＋ **DynamoDB＋DynamoDB Streams**（実イベントストア）＋ **Lambda**（Streams 消費→RDS 投影）。付随: ECR / VPC・サブネット / IAM / Secrets Manager / CloudWatch Logs。※学習用のため未使用時は `terraform destroy` で撤去する前提。
 
 ## アーキテクチャ方針（倉庫）
-- **境界づけられたコンテキスト**: Inventory(コア) / Receiving / Fulfillment / Stocktaking。上流に Ordering(薄い外部トリガ)。
+- **境界づけられたコンテキスト**: 在庫 Inventory（コア）/ 入荷 Receiving / 出荷 Fulfillment / 棚卸 Stocktaking。上流に 受注 Ordering（薄い外部トリガ）。
 - **コアサブドメイン**: 在庫引当（Stock Allocation）。
 - **集約**: `InventoryItem`（SKU × 倉庫ロケーション単位）。不変条件 `available = onHand - allocated ≥ 0`。
   - コマンド: `ReceiveStock` / `AllocateStock` / `DeallocateStock` / `ShipStock` / `AdjustStock(棚卸)`
