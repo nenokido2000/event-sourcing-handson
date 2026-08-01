@@ -45,7 +45,7 @@ flowchart LR
       direction TB
       STK["🟧 棚卸が開始された<br/>StocktakeStarted"]
       CNT["🟧 実地数量がカウントされた<br/>StockCounted"]
-      DISC["🟧 在庫差異が記録された<br/>StockDiscrepancyRecorded"]
+      DISC["🟧❓ 在庫差異が記録された<br/>StockDiscrepancyRecorded<br/>（③で取り下げ→リードモデルへ）"]
       ADJ["🟧 在庫が調整された<br/>StockAdjusted"]
       STK --> CNT --> DISC --> ADJ
     end
@@ -72,8 +72,9 @@ flowchart LR
 | 7 | 在庫が出荷された | `StockShipped` | 出荷（Fulfillment） | 引当済み分のみ出荷可 |
 | 8 | 棚卸が開始された | `StocktakeStarted` | 棚卸（Stocktaking） | |
 | 9 | 実地数量がカウントされた | `StockCounted` | 棚卸（Stocktaking） | |
-| 10 | 在庫差異が記録された | `StockDiscrepancyRecorded` | 棚卸（Stocktaking） | 帳簿値と実地値の差 |
-| 11 | 在庫が調整された | `StockAdjusted` | 棚卸（Stocktaking）→在庫（Inventory） | 手持在庫を実地値へ補正（増減両方） |
+| 10 | ~~在庫差異が記録された~~ | ~~`StockDiscrepancyRecorded`~~ | — | **取り下げ**（棚卸スライス）。差異は集約をまたぐ**導出値**でありイベント（新しい事実）ではない → 棚卸差異ビュー（リードモデル）へ |
+| 11 | 在庫が調整された | `StockAdjusted` | 棚卸（Stocktaking）→在庫（Inventory） | 手持在庫を実情へ補正（増減両方）。**H10確定** |
+| 12' | 在庫が凍結された／解凍された | `StockFrozen` / `StockUnfrozen` | 在庫（Inventory） | ②で追加。棚卸中は格納・払出を拒否（引当は通す） |
 | 12 | 在庫がロケーション間で移動された | `StockMoved` | 在庫（Inventory） | ❓H5: M3+改修シナリオ候補。2集約またぎ＝ポリシー/Saga |
 
 ## 外部トリガ（上流システム・薄く扱う）
@@ -90,12 +91,15 @@ flowchart LR
 - **H4 出荷粒度** = **2段**（`StockPicked` → `StockShipped`）。
 - **H5 在庫移動** = `StockMoved` は **M3+ 改修シナリオ候補**（Big Picture には描くが M3 の最初のスライス外）。
 
-### 未決（②プロセス / ③設計 / M2戦術で詰める）
-- **H6 受入の集約帰属** ⚑重要: 受入ドック在庫は*ロケーション未確定*ゆえ `InventoryItem(SKU×ロケーション)` に属せない。→ **受入は別集約（入荷 / `InboundReceipt`）**で受け、**格納(putaway)で InventoryItem へ移す**境界が自然に立つ。②/③で確定。
-- **H7 在庫量の増減タイミング**: ピッキング時 / 出荷時に 手持在庫・引当済 のどちらがいつ減るか（例: ピッキングで手持在庫↓・引当済↓、出荷は履歴事実のみ？）。M2 戦術で確定。
+### 決定済み（②/③のウォークスルーで決着）
+- **H6 受入の集約帰属**（②で解決）: 受入ドック在庫は*ロケーション未確定*ゆえ `InventoryItem(SKU×ロケーション)` に属せない。→ **受入は別集約（入荷 / `InboundReceipt`）**で受け、**格納(putaway)で InventoryItem へ移す**（ポリシー P1）。
+- **H7 在庫量の増減タイミング**（2026-07-29 / 出荷スライス）: **ピッキング時**に 手持在庫↓・引当済↓（ポリシー P3 → `IssueStock`）。出荷は完了の事実のみ。同額ずつ減るので引当可能は不変。
+- **H9 出荷指示の出所**（2026-07-29 / 出荷スライス）: 薄い**外部トリガ**のまま・**注文単位**。バッチ（ウェーブ）単位は M3+ 候補へ。
+- **H10 棚卸調整の表現**（2026-08-01 / 棚卸スライス）: `AdjustStock` は**実地値（絶対値）**を渡し、`StockAdjusted` が**符号付き差分＋実地値＋原因**を持つ**補正**イベント。帳簿値を強整合で知るのは在庫集約だけ、という理由で決着。
+
+### 未決（M2戦術で詰める）
 - **H8 検品の独立性**: `StockInspected` を独立イベントにするか、Received/PutAway に内包するか。
-- **H9 出荷指示の出所**: `ShipmentRequested` は外部トリガか 出荷集約 が発生させるか。
-- **H10 棚卸調整の表現**: `StockAdjusted` の符号（増減両方）と、補正/打ち消しイベントとしての位置づけ。
+- **H11 棚卸中の引当**（2026-08-01 追加 / 棚卸スライス）: 棚卸中に引当をどこまで許すか。本来は実績データに基づく数値判断（マイナス差異の発生率 vs 機会損失）。PoCには実績値がないため当面「引当は通す＋P2で引当先を後回し」で進め、実績が出たら見直す。→ M3+ 改修シナリオ候補②。
 
 ## 次工程への申し送り
 - ②Process Modeling: 各イベントに **コマンド（命令形）・アクター・ポリシー・リードモデル**を紐付け、H6/H7/H9 を優先的に解く。

@@ -24,7 +24,7 @@ graph TB
     ORD -->|"受注が受け付けられた (U/D・引当P2の入力)"| INV
     RCV -->|"在庫が格納された→在庫を計上する (P1・Partnership)"| INV
     INV -->|"引当→出荷(人)＋出庫反映P3 (C/S・下流=出荷)"| FUL
-    STK -->|"在庫差異が記録された→在庫を調整する (P4・U/D)"| INV
+    STK -->|"実地数量がカウントされた→在庫を調整する (P4・U/D)<br/>棚卸開始/クローズ→凍結/解凍 (P5 Saga)"| INV
 ```
 
 凡例: **U/D** = Upstream/Downstream（上流→下流）、**C/S** = Customer/Supplier、**P1〜P4** = [`02-process.md`](event-storming/02-process.md) のポリシー。
@@ -37,7 +37,7 @@ graph TB
 | 受注（Ordering） → 在庫（Inventory） | Upstream/Downstream（外部） | 外部イベント「受注が受け付けられた」→ 引当ポリシー P2 | 本PoCのコア入力。上流は薄い外部トリガ |
 | 入荷（Receiving） → 在庫（Inventory） | **Partnership**（同一倉庫チーム） | ポリシー P1（在庫が格納された→在庫を計上する） | 格納で在庫をコアへ供給。2集約またぎの結果整合 |
 | 在庫（Inventory） → 出荷（Fulfillment） | Customer/Supplier（出荷=下流） | 出荷は👤アクター駆動（ピッキング/出荷）＋ポリシー P3（在庫がピッキングされた→在庫を払い出す） | 引当を消化して出荷 |
-| 棚卸（Stocktaking） → 在庫（Inventory） | Upstream/Downstream | ポリシー P4（在庫差異が記録された→在庫を調整する） | 実地差異を補正イベントで反映 |
+| 棚卸（Stocktaking） → 在庫（Inventory） | Upstream/Downstream | ポリシー P4（実地数量がカウントされた→在庫を調整する）＋ **サーガ P5**（棚卸開始→凍結／クローズ→解凍） | 棚卸は**実情の把握とレポート**に徹し差異を持たない。実地値を渡し、差分は在庫集約が出す（H10）。P5 は複数の在庫集約にまたがる唯一の Saga |
 
 ## サブドメイン分類（投資配分の指針）
 - **コア**: 在庫（Inventory）＝在庫引当。設計・テスト・レビューの投資を集中。

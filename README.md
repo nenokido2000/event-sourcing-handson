@@ -65,8 +65,10 @@ event-sourcing-handson/
 ## 現在の状況
 
 - ✅ 計画（[`docs/plan.md`](docs/plan.md)）とステアリング機構の整備
-- ⬜ M0: 足場（Gradle マルチモジュール雛形 / docker-compose）
-- ⬜ M1〜: 倉庫の分析・設計・実装（以降、上記ロードマップに沿って進行）
+- ✅ M0: 足場（Gradle マルチモジュール雛形 / docker-compose / 機密混入ガード）
+- ✅ M1: 倉庫の戦略設計 — イベントストーミング3段（[`docs/event-storming/`](docs/event-storming/)）、[`コンテキストマップ`](docs/context-map.md)、[`ユビキタス言語表`](docs/ubiquitous-language.md)。集約4つ・ポリシーP1〜P5・コアサブドメイン（在庫引当）を確定
+- ⬜ M2: 倉庫の戦術設計（集約の詳細・不変条件・ATDD受入シナリオ骨子）← 次
+- ⬜ M3〜: 実装（TDD＋ATDD の二重ループ）以降、上記ロードマップに沿って進行
 
 ## セットアップ / 動作確認（M0 以降）
 
