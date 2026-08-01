@@ -7,7 +7,10 @@
 ## 用語の約束
 - イベント = 過去形（起きた事実）。コマンド = 命令形（意図）。集約/値オブジェクト = 名詞。
 - 命名規約は [`.claude/rules/ddd-ubiquitous-language.md`](../../.claude/rules/ddd-ubiquitous-language.md) に従う。
-- **凡例**: 🟧 ドメインイベント / 🟦 外部トリガ（上流システム）/ ❓ ホットスポット（要決定・保留）。
+- **凡例**: 🟧 オレンジ = ドメインイベント / ↩ ピンク = 外部システム（上流トリガ）/ ❓ 紫の菱形 = ホットスポット（要決定・保留）。
+  配色は [`00-method.md`「付箋の色」](00-method.md#付箋の色イベントストーミング標準記法この節が正) が正（イベントストーミング標準記法）。
+  **この図の時間は左→右**＝実際の壁の時系列。
+  ※ 以前は外部トリガに 🟦 を当てていたが、標準では**青はコマンド**なので↩ピンクへ改めた。
 
 ## ドメインイベント時系列（Big Picture）
 
@@ -15,38 +18,43 @@
 
 ```mermaid
 flowchart LR
+    %% 付箋の色 = イベントストーミング標準記法（正は 00-method.md「付箋の色」）
+    classDef evt fill:#ffb366,stroke:#e07b1a,color:#3d2000;
+    classDef ext fill:#ffb3d1,stroke:#d1568f,color:#4a0f2b;
+    classDef hot fill:#b57edc,stroke:#6a2fa0,color:#1f0a33;
+
     subgraph 入荷["入荷（Receiving）"]
       direction TB
-      PO["🟦 発注が確定した<br/>（外部・上流: 調達 Procurement）"]
-      RCV["🟧 在庫が入荷された<br/>StockReceived<br/>（受入ドック・ロケーション未確定・引当不可）"]
-      INSP["🟧❓ 在庫が検品された<br/>StockInspected（独立させるか保留）"]
-      PUT["🟧 在庫が格納された<br/>StockPutAway<br/>（ロケーション確定→引当可能化）"]
+      PO["↩ 発注が確定した<br/>（外部・上流: 調達 Procurement）"]:::ext
+      RCV["🟧 在庫が入荷された<br/>StockReceived<br/>（受入ドック・ロケーション未確定・引当不可）"]:::evt
+      INSP{"❓ H8 在庫が検品された<br/>StockInspected<br/>（独立させるか保留）"}:::hot
+      PUT["🟧 在庫が格納された<br/>StockPutAway<br/>（ロケーション確定→引当可能化）"]:::evt
       PO --> RCV --> INSP --> PUT
     end
 
     subgraph 引当["在庫（Inventory）★コア"]
       direction TB
-      ORD["🟦 受注が受け付けられた<br/>（外部・上流: 受注 Ordering）"]
-      ALLOC["🟧 在庫が引き当てられた<br/>StockAllocated"]
-      DEALLOC["🟧 引当が解除された<br/>StockDeallocated"]
+      ORD["↩ 受注が受け付けられた<br/>（外部・上流: 受注 Ordering）"]:::ext
+      ALLOC["🟧 在庫が引き当てられた<br/>StockAllocated"]:::evt
+      DEALLOC["🟧 引当が解除された<br/>StockDeallocated"]:::evt
       ORD --> ALLOC
       ALLOC -. 取消/期限切れ .-> DEALLOC
     end
 
     subgraph 出荷["出荷（Fulfillment）"]
       direction TB
-      SHREQ["🟦❓ 出荷が指示された<br/>ShipmentRequested"]
-      PICK["🟧 在庫がピッキングされた<br/>StockPicked"]
-      SHIP["🟧 在庫が出荷された<br/>StockShipped"]
+      SHREQ["↩ 出荷が指示された<br/>ShipmentRequested<br/>（H9確定: 外部トリガ・注文単位）"]:::ext
+      PICK["🟧 在庫がピッキングされた<br/>StockPicked"]:::evt
+      SHIP["🟧 在庫が出荷された<br/>StockShipped"]:::evt
       SHREQ --> PICK --> SHIP
     end
 
     subgraph 棚卸["棚卸（Stocktaking）・横断定期"]
       direction TB
-      STK["🟧 棚卸が開始された<br/>StocktakeStarted"]
-      CNT["🟧 実地数量がカウントされた<br/>StockCounted"]
-      DISC["🟧❓ 在庫差異が記録された<br/>StockDiscrepancyRecorded<br/>（③で取り下げ→リードモデルへ）"]
-      ADJ["🟧 在庫が調整された<br/>StockAdjusted"]
+      STK["🟧 棚卸が開始された<br/>StocktakeStarted"]:::evt
+      CNT["🟧 実地数量がカウントされた<br/>StockCounted"]:::evt
+      DISC{"❓ 在庫差異が記録された<br/>StockDiscrepancyRecorded<br/>（③で取り下げ→リードモデルへ）"}:::hot
+      ADJ["🟧 在庫が調整された<br/>StockAdjusted"]:::evt
       STK --> CNT --> DISC --> ADJ
     end
 
@@ -54,7 +62,7 @@ flowchart LR
     ALLOC --> PICK
     ADJ -. 手持在庫補正 .-> ALLOC
 
-    MOVE["🟧❓ 在庫がロケーション間で移動された<br/>StockMoved（H5: M3+改修シナリオ候補・M3コア外）"]
+    MOVE{"❓ H5 在庫がロケーション間で移動された<br/>StockMoved<br/>（M3+改修シナリオ候補・M3コア外）"}:::hot
     PUT -. 再配置 .-> MOVE
     MOVE -. 移動先 .-> ALLOC
 ```
@@ -80,7 +88,7 @@ flowchart LR
 ## 外部トリガ（上流システム・薄く扱う）
 - **発注が確定した**（調達/購買）→ 入荷の起点。
 - **受注が受け付けられた**（Ordering）→ 引当の起点。**本PoCでは Ordering は薄い外部トリガ**として扱う。
-- **出荷が指示された**（ShipmentRequested）→ ❓出荷（Fulfillment）内で発生させるか外部トリガか保留（H9）。
+- **出荷が指示された**（ShipmentRequested）→ 薄い**外部トリガ**・**注文単位**（H9確定）。
 
 ## ホットスポット（要決定・保留）
 

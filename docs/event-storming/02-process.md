@@ -10,9 +10,9 @@ H1〜H6 の決定から、整合性境界（不変条件を守る最小単位）
 | 集約 | BC | 識別子 | 主な状態 | 不変条件 |
 |---|---|---|---|---|
 | 入荷（`InboundReceipt`） | 入荷（Receiving） | `ReceiptId` | SKU・受入量・残格納量 | 格納総量 ≤ 受入量（残量を負にしない） |
-| **在庫（`InventoryItem`）★コア** | **在庫（Inventory）** | **`(Sku, LocationId)`** | 手持在庫・引当済 | **引当可能 = 手持在庫 − 引当済 ≥ 0** |
+| **在庫（`InventoryItem`）★コア** | **在庫（Inventory）** | **`(Sku, LocationId)`** | 手持在庫・引当済・凍結中 | **引当可能 = 手持在庫 − 引当済 ≥ 0**／凍結中は物理を動かすコマンドを拒否 |
 | 出荷（`Shipment`） | 出荷（Fulfillment） | `ShipmentId` | 明細（SKU・ロケーション・数量）・状態 | 出荷は引当済み分のみ・出荷指示→ピッキング→出荷 の順 |
-| 棚卸（`Stocktake`） | 棚卸（Stocktaking） | `StocktakeId` | 対象範囲・カウント・差異 | カウントは対象ロケーションに対してのみ |
+| 棚卸（`Stocktake`） | 棚卸（Stocktaking） | `StocktakeId` | 対象ロケーション・カウント（実地値） | カウントは対象ロケーションに対してのみ（**差異は持たない**） |
 
 > BC と集約が同名になるのは正常（例: 注文コンテキストの中心にある集約は注文集約）。**BCの名前はその領域の中心概念から取られる**ため。
 > 区別は名前ではなく**種別語**が担う（「入荷コンテキスト」「入荷集約」）。詳細は [`03-software-design.md`](03-software-design.md) の「集約の判定基準」。
@@ -112,14 +112,20 @@ P4 棚卸反映 : 🟧実地数量がカウントされた（棚卸）→ 🟦�
 ＝**イベントが直接コマンドを生む線は無い**。集約は点線枠＝整合性境界（コマンドが枠に入り枠内でイベントが出る）。
 枠をまたぐ自動連鎖は💜ポリシー経由（1Tx1集約）。リードモデルはイベントから投影（CQRS、点線「投影」）。
 
+> **配色は[イベントストーミング標準記法](00-method.md#付箋の色イベントストーミング標準記法この節が正)**
+> （🟧オレンジ=イベント / 🟦青=コマンド / 💜ライラック=ポリシー・サーガ / 📄緑=リードモデル / ↩ピンク=外部システム /
+> 👤黄=アクター / 淡黄の枠=集約）。**この図の時間は上→下**（壁の時系列そのものではなく*文法*の可視化。
+> 左→右の壁レイアウトは [`01-big-picture.md`](01-big-picture.md) が担う）。
+
 ```mermaid
 flowchart TB
-    classDef cmd fill:#cfe8ff,stroke:#3b82c4,color:#0b2e4f;
-    classDef evt fill:#ffe4b5,stroke:#d08a2c,color:#5a3a0a;
-    classDef pol fill:#e8d5ff,stroke:#8b5cc4,color:#3a1f5a;
-    classDef ext fill:#d7f5d7,stroke:#4a9a4a,color:#123a12;
-    classDef rm fill:#fff3cd,stroke:#c8a13b,color:#5a4a0a;
-    classDef actor fill:#ffe0ec,stroke:#c4568b,color:#5a1f3a;
+    %% 付箋の色 = イベントストーミング標準記法（正は 00-method.md「付箋の色」）
+    classDef evt   fill:#ffb366,stroke:#e07b1a,color:#3d2000;
+    classDef cmd   fill:#7fbfe8,stroke:#2b7cb8,color:#062033;
+    classDef actor fill:#ffe066,stroke:#c9a227,color:#3d3300;
+    classDef pol   fill:#d9c2f0,stroke:#8b5cc4,color:#2e1650;
+    classDef rm    fill:#a8e6a3,stroke:#3f9e3a,color:#0f2f0d;
+    classDef ext   fill:#ffb3d1,stroke:#d1568f,color:#4a0f2b;
 
     %% ── 外部システム（↩）──
     X_PO["↩ 発注が確定した"]:::ext
@@ -128,20 +134,20 @@ flowchart TB
     X_CANCEL["↩ 注文が取り消された / 期限切れ"]:::ext
 
     %% ── アクター（👤）──
-    A_RCV(["👤 入荷担当"]):::actor
-    A_PUT(["👤 格納担当"]):::actor
-    A_PICK(["👤 ピッキング担当"]):::actor
-    A_SHIP(["👤 出荷担当"]):::actor
-    A_STK(["👤 棚卸責任者"]):::actor
-    A_CNT(["👤 棚卸担当"]):::actor
+    A_RCV["👤 入荷担当"]:::actor
+    A_PUT["👤 格納担当"]:::actor
+    A_PICK["👤 ピッキング担当"]:::actor
+    A_SHIP["👤 出荷担当"]:::actor
+    A_STK["👤 棚卸責任者"]:::actor
+    A_CNT["👤 棚卸担当"]:::actor
 
     %% ── リードモデル（📄・イベントから投影）──
-    RM_INBOUND[("📄 入荷予定ビュー")]:::rm
-    RM_LOC[("📄 ロケーション空き容量ビュー")]:::rm
-    RM_AVAIL[("📄 引当可能在庫ビュー<br/>AvailableStockView")]:::rm
-    RM_PICK[("📄 ピックリストビュー")]:::rm
-    RM_VAR[("📄 棚卸差異ビュー<br/>StocktakeVarianceView")]:::rm
-    RM_LEDGER[("📄 在庫元帳ビュー<br/>StockLedgerView")]:::rm
+    RM_INBOUND["📄 入荷予定ビュー"]:::rm
+    RM_LOC["📄 ロケーション空き容量ビュー"]:::rm
+    RM_AVAIL["📄 引当可能在庫ビュー<br/>AvailableStockView"]:::rm
+    RM_PICK["📄 ピックリストビュー"]:::rm
+    RM_VAR["📄 棚卸差異ビュー<br/>StocktakeVarianceView"]:::rm
+    RM_LEDGER["📄 在庫元帳ビュー<br/>StockLedgerView"]:::rm
 
     %% ── コマンド（🟦）──
     C_RCV["入荷する<br/>(ReceiveStock)"]:::cmd
@@ -160,11 +166,11 @@ flowchart TB
     C_UNFREEZE["解凍する<br/>(UnfreezeStock)"]:::cmd
 
     %% ── ポリシー（💜・自動反応）──
-    P1{{"💜 P1 格納伝播"}}:::pol
-    P2{{"💜 P2 引当ポリシー ★コア"}}:::pol
-    P3{{"💜 P3 出庫反映"}}:::pol
-    P4{{"💜 P4 棚卸反映"}}:::pol
-    P5{{"💜 P5 棚卸凍結<br/>Saga(状態あり)"}}:::pol
+    P1["💜 P1 格納伝播"]:::pol
+    P2["💜 P2 引当ポリシー ★コア"]:::pol
+    P3["💜 P3 出庫反映"]:::pol
+    P4["💜 P4 棚卸反映"]:::pol
+    P5["💜 P5 棚卸凍結<br/>Saga(状態あり)"]:::pol
 
     %% ── 集約（整合性境界）＝サブグラフ ──
     subgraph AG_RCV["🧺 入荷 InboundReceipt"]
@@ -236,6 +242,12 @@ flowchart TB
     E_PLACE -.投影.-> RM_LEDGER
     E_ISSUE -.投影.-> RM_LEDGER
     E_ADJ -.投影.-> RM_LEDGER
+
+    %% ── 集約の枠 ＝「大きい淡黄の付箋」（整合性境界）──
+    style AG_RCV fill:#fff9d6,stroke:#c9ad2e,stroke-width:2px,stroke-dasharray:5 4,color:#3d3300
+    style AG_INV fill:#fff2a8,stroke:#c9ad2e,stroke-width:3px,stroke-dasharray:5 4,color:#3d3300
+    style AG_SHIP fill:#fff9d6,stroke:#c9ad2e,stroke-width:2px,stroke-dasharray:5 4,color:#3d3300
+    style AG_STK fill:#fff9d6,stroke:#c9ad2e,stroke-width:2px,stroke-dasharray:5 4,color:#3d3300
 ```
 
 > 読み方: **コマンド（青）の手前には必ず 👤/💜/↩ がある**＝「誰・何が決めたか」が見える。枠（集約）をまたぐ自動連鎖は💜ポリシー経由（1Tx1集約）。
