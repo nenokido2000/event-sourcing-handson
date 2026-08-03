@@ -103,4 +103,4 @@
 > **語尾の約束**: 状態を持たない単発の伝播＝`...Policy`、状態を持つ長期プロセス＝`...Saga`。
 > 実装（`@EventHandler` か Axon の Saga か）と1対1で対応する。導出は [`event-storming/02-process.md`](event-storming/02-process.md)。
 
-> ❓ = 保留・暫定（M2 戦術設計で確定）。詳細は [`event-storming/03-software-design.md`](event-storming/03-software-design.md) の未決一覧を参照。
+> ❓ = 保留・暫定。取り消し線 = 検討したが不採用。**決定の理由は [`decisions.md`](decisions.md)（ADR）が正**。

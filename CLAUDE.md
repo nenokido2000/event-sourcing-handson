@@ -42,8 +42,22 @@
   - ※ `gradlew` 未生成の間は gradle 系チェックは no-op（M0で有効化）
 
 ## ドメインの要点（ユビキタス言語）
-- コアサブドメイン = **在庫引当（Stock Allocation）**。集約 `InventoryItem`、不変条件 `available = onHand - allocated ≥ 0`。
-- コマンドは命令形（`ReceiveStock` 等）、イベントは過去形（`StockReceived` 等）。用語集は `docs/` を正とする。
+- コアサブドメイン = **在庫引当（Stock Allocation）**。集約 `InventoryItem`、不変条件 `available = onHand - allocated ≥ 0`
+  （強制点は引当コマンドの受付ゲート。棚卸調整だけが例外的に負を持ち込む → `docs/decisions.md` H12）。
+- コマンドは命令形（`ReceiveStock` 等）、イベントは過去形（`StockReceived` 等）。
+
+## ドキュメントの引き方（**必要な文書だけ読む**）
+`docs/` は約8万文字ある。**全部読まない**こと。目的別の入口は [`docs/README.md`](docs/README.md)（歩き方）。
+
+| 知りたいこと | 読む文書 | 読まなくてよい文書 |
+|---|---|---|
+| 実装する（型・不変条件・テスト骨子） | `docs/tactical-design.md` | event-storming/ 全般 |
+| 命名・用語 | `docs/ubiquitous-language.md` | 同上 |
+| 「これ前に決めたのでは？」 | **`docs/decisions.md`（ADR・決定の正）** | 同上 |
+| 分析の進め方・導出の経緯 | `docs/event-storming/` | — |
+
+- **決定を書く場所は `docs/decisions.md` だけ**。他の文書には結果を書き、理由はリンクする（重複を作らない）。
+- 新しい論点が出たら H13〜 で `docs/decisions.md` に追記する（却下案とその理由も残す）。
 
 ## 動作確認方法（M0以降に充実）
 ```bash
