@@ -10,7 +10,7 @@
 > | スライス | 状態 |
 > |---|---|
 > | ① 在庫（`InventoryItem`）★コア | **確定**（2026-08-03） |
-> | ② 入荷（`InboundReceipt`） | 未着手 |
+> | ② 入荷（`InboundReceipt`） | **確定**（2026-08-05） |
 > | ③ 出荷（`Shipment`） | 未着手 |
 > | ④ 棚卸（`Stocktake`） | 未着手 |
 > | ⑤ ポリシー P1〜P5 / リードモデル | 未着手 |
@@ -287,9 +287,145 @@ M3 で**先に書いて赤にする**（[`.claude/rules/testing.md`](../.claude/
 
 ---
 
+## 集約② 入荷（`InboundReceipt`）
+
+**責務**: 受入ドックに置かれた**1SKU の物のかたまり**と、それを守る約束。
+「受け入れた量より多くを棚に上げない」（格納累計 ≤ 受入量）の責任者。
+在庫と違い**引当には関与しない**（ロケーション未確定の在庫は引けない＝ H3 / H6）。
+
+- 検品は独立させず受入〜格納に**内包**する（H8）。`InspectStock` / `StockInspected` は作らない。
+- **1入荷 = 1SKU**。`ReceiptId` は伝票番号ではなく**ドックに置かれた物のかたまりの識別子**
+  （H13 の帰結。ユニットは代替可能なので、かたまりを分ける軸は SKU だけでよい）。
+
+### 状態
+
+```
+InboundReceipt
+  id          : ReceiptId       // 集約識別子
+  sku         : Sku             // 1入荷 = 1SKU
+  receivedQty : Quantity        // 受入量（受入後は不変）
+  putAwayQty  : Quantity        // 格納累計
+  closed      : boolean         // クローズ済み（H14）
+  closureReason : ClosureReason | null
+
+  // 導出値（フィールドに持たない）
+  remaining = receivedQty - putAwayQty   // 残格納量。★ 常に ≥ 0
+```
+
+- **残格納量を持たず格納累計を持つ**理由: 在庫側で引当済を明細の合計＝導出値にしたのと同じ流儀
+  （積み上げた事実を保持し、残りは引き算で出す）。イベント単独でリードモデルも更新できる。
+- **残格納量は `Quantity`（非負）で表せる**。在庫の引当可能（負を取りうる／H12）との違いは、
+  **負を持ち込む経路がここには無い**こと。棚卸調整に相当する「外から実情を上書きする入力」が入荷には無く、
+  変化はすべて自分の受付ゲートを通った格納だけで起きる。
+
+### 不変条件と、その強制点
+
+| 不変条件 | 強制点 | 備考 |
+|---|---|---|
+| **格納累計 ≤ 受入量**（残格納量 ≥ 0） | `PutAwayStock` の受付ゲート（`残格納量 ≥ 格納量`） | 受け入れた以上を棚に上げない |
+| クローズ後は格納しない | `PutAwayStock` の受付ゲート | 終わった入荷は動かない（H14） |
+| 受入量は受入後に変わらない | 変更コマンドを持たない | 訂正が要るなら打ち切って入荷し直す |
+
+### コマンド → 受付ゲート → イベント → 状態遷移
+
+#### 1. 入荷する（`ReceiveStock`）— 起点: 外部トリガ（調達 / Procurement）
+
+```java
+record ReceiveStock(ReceiptId receiptId, Sku sku, Quantity quantity)
+record StockReceived(ReceiptId receiptId, Sku sku, Quantity quantity)
+```
+
+| 受付ゲート（拒否条件） | 例外 |
+|---|---|
+| 数量がゼロ | `InvalidQuantityException` |
+
+- **集約の誕生**: コンストラクタコマンド（在庫の `@CreationPolicy(CREATE_IF_MISSING)` とは異なる）。
+  入荷は `ReceiptId` を**外から与えられて1回だけ生まれる**ため、同一IDの二重受入はイベントストアの
+  一意性制約で拒否される（Axon が集約ストリーム作成時に例外）。在庫が「その棚マスに初めて物が入った瞬間に
+  生まれる」のと対照的で、**識別子の出所が違えば誕生の作り方も違う**。
+- 状態遷移: `receivedQty = quantity`／`putAwayQty = ZERO`／`closed = false`
+
+#### 2. 格納する（`PutAwayStock`）— 起点: 倉庫作業者
+
+```java
+record PutAwayStock(ReceiptId receiptId, LocationId locationId, Quantity quantity)
+record StockPutAway(ReceiptId receiptId, Sku sku, LocationId locationId, Quantity quantity)
+```
+
+| 受付ゲート（拒否条件） | 例外 |
+|---|---|
+| 数量がゼロ | `InvalidQuantityException` |
+| クローズ済み | `ReceiptAlreadyClosedException` |
+| **格納量 > 残格納量** | **`PutAwayExceedsRemainingException`** ← 不変条件 |
+
+- **分割格納を許す**（1入荷を複数ロケーションへ分けて置くのは現実に起きる）。ロケーションは**格納時に確定**する。
+- イベントに `sku` を載せるのは、**ポリシー P1 が入荷集約を引かずに `PlaceStock` を組み立てられる**ようにするため
+  （在庫の識別子は `(Sku, LocationId)`）。プロジェクションが集約の状態を引かないのと同じ理由。
+- **残格納量がゼロになったら、続けて `InboundReceiptClosed(残量0, COMPLETED)` を原子的に発行する**（H14）。
+- 状態遷移: `putAwayQty += quantity`（残ゼロならクローズ）
+
+#### 3. 入荷をクローズする（`CloseInboundReceipt`）— 起点: 倉庫作業者（破損・欠品）
+
+```java
+record CloseInboundReceipt(ReceiptId receiptId, ClosureReason reason)
+record InboundReceiptClosed(ReceiptId receiptId, Quantity remainingQuantity, ClosureReason reason)
+enum ClosureReason { COMPLETED, DAMAGED, SHORTAGE }   // 全量格納 / 破損 / 欠品
+```
+
+| 受付ゲート（拒否条件） | 例外 |
+|---|---|
+| クローズ済み（二重打ち切り） | `ReceiptAlreadyClosedException` |
+| 理由が `COMPLETED`（全量格納は自動発行のみ） | `InvalidClosureReasonException` |
+
+- **残格納量が残っていても通す**。破損・欠品という現実を**残量と理由として記録して**終わらせる
+  （隠さない＝在庫側 H10 / H12 と同じ姿勢）。**判断の理由・却下した選択肢は
+  [`decisions.md`](decisions.md#h14-格納しきれなかった入荷の終わらせ方) を参照。**
+- **冪等にしない**（凍結・解凍とは逆）。発行元が人間のアクターであり、二重打ち切りは誤操作として伝えるべきため。
+- 状態遷移: `closed = true`／`closureReason = reason`
+
+### 例外一覧
+
+| 例外 | 意味 |
+|---|---|
+| `PutAwayExceedsRemainingException` | 格納量 > 残格納量。**入荷の不変条件違反** |
+| `ReceiptAlreadyClosedException` | クローズ済みの入荷への格納・再クローズ |
+| `InvalidClosureReasonException` | `COMPLETED` を指定した打ち切り要求（全量格納は自動発行のみ） |
+| `InvalidQuantityException` | 数量ゼロ（在庫スライスと共有） |
+
+### 在庫集約との接続（ポリシー P1）
+
+`StockPutAway` → **P1（格納伝播）** → `PlaceStock(InventoryItemId(sku, locationId), quantity, receiptId)`。
+1トランザクション1集約のため**結果整合**（H6）。
+
+> **未決（⑤ ポリシースライスで決める）**: 格納先の在庫が**凍結中**だと `PlaceStock` は拒否される
+> （`InventoryFrozenException`）。このとき入荷側は格納済みなのに在庫に反映されない**片落ち**が残る。
+> 扱い方（リトライ／デッドレター／そもそも凍結中の棚には置かせない運用）は P1 の設計で決着させる。
+> 関連: [`decisions.md`](decisions.md#h11-棚卸中の引当をどこまで許すか) H11「既知のリスク」。
+
+### テスト骨子（Axon `AggregateTestFixture` / Given-When-Then）
+
+**正常系**
+1. 入荷すると入荷が生まれ、残格納量が受入量と等しくなる
+2. 一部を格納すると残格納量が減る
+3. 複数のロケーションへ分割して格納できる
+4. 全量を格納すると、格納イベントに続けて**完了としてクローズされる**（`COMPLETED`・残量ゼロ）
+
+**不変条件（異常系・`expectException` でイベントを発行しないこと）**
+5. 残格納量を超える格納は拒否される ★不変条件
+6. 受入量ゼロの入荷は拒否される
+7. 数量ゼロの格納は拒否される
+8. クローズ済みの入荷への格納は拒否される
+
+**クローズ（H14）**
+9. 残格納量を残したまま破損で打ち切ると、**残量と理由を持つ**クローズイベントが出る
+10. 欠品で打ち切っても同様に残量が記録される
+11. クローズ済みの入荷の二重打ち切りは拒否される（冪等にしない）
+12. `COMPLETED` を指定した打ち切り要求は拒否される
+
+---
+
 ## 以降のスライス（未着手）
 
-- ② 入荷（`InboundReceipt`）… H8 確定により検品は内包。不変条件「格納累計 ≤ 受入量」。
 - ③ 出荷（`Shipment`）… 状態遷移 出荷指示 → ピッキング → 出荷。引当明細（`AllocationId`）を持つ形になるはず（在庫側と接続する）。
 - ④ 棚卸（`Stocktake`）… 差異を持たない。対象ロケーションの列挙とカウント。
 - ⑤ ポリシー P1〜P4（`@EventHandler` → `CommandGateway`）／サーガ P5／リードモデル4種のスキーマ。
