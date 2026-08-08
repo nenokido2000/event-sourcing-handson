@@ -85,6 +85,8 @@ event-sourcing/
 - **M0 — 足場**: `git init`、Gradleマルチモジュール雛形、`infra/docker-compose.yml`(DynamoDB Local+Postgres)、README。（→ ここでステアリングのゲートが有効化）
 - **M1 — 倉庫の戦略設計（分析成果物）**: イベントストーミング（Big Picture→Process→Design）を `docs/` にMermaidで記録。BC/コンテキストマップ/コアサブドメイン特定。← **最重視**（`event-storming` スキル活用）
 - **M2 — 倉庫の戦術設計（成果物）**: 集約境界・コマンド/イベント/ポリシー・不変条件・ユビキタス言語を `docs/` に整理。**この段でATDDの受入シナリオ骨子（Given-When-Then の言葉）も洗い出す**（実装せず言葉だけ。M3でSpec化）。
+  - **進め方＝1集約1スライス**（M1 と同じ刻み方）。M1 で洗い出した4集約＋ポリシー/リードモデルをそのまま①〜⑤とし、コア（在庫）から順に型レベルまで確定させる。
+  - **進捗表は [`tactical-design.md`](tactical-design.md) の冒頭**（スライスごとの確定日）。決定は [`decisions.md`](decisions.md) に H番号で記録する。
 - **M3 — 倉庫実装 (Axon 4.x / 組み込みストア)**: 受入→引当→出荷の**動く垂直スライス** + 3プロジェクション + REST API。**TDD＋ATDDの二重ループで実装**する。
   - 外側(ATDD): まず `specs/` に Gauge の Markdown Spec（受入→引当→出荷、過剰引当の拒否…）を書き、`warehouse-atdd` に Playwright(request) で REST を叩くステップ実装を用意 → 失敗させる（Red）。**ハーネスは薄いハッピーパス1本で立ち上げ**、Spec の作り込みはドメインの形が見えてから増やす（本丸を先に固める）。
   - 内側(TDD): 集約・値オブジェクトを Axon Fixture / JUnit で**テスト先行**（Red→Green→Refactor）。不変条件 `available≥0` の異常系も先に書く。
