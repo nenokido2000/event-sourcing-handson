@@ -11,9 +11,9 @@
 > |---|---|
 > | ① 在庫（`InventoryItem`）★コア | **確定**（2026-08-03） |
 > | ② 入荷（`InboundReceipt`） | **確定**（2026-08-05） |
-> | ③ 出荷（`Shipment`） | 未着手 |
+> | ③ 出荷（`Shipment`） | **確定**（2026-08-09） |
 > | ④ 棚卸（`Stocktake`） | 未着手 |
-> | ⑤ ポリシー P1〜P5 / リードモデル | 未着手 |
+> | ⑤ ポリシー P1〜P6 / リードモデル | 未着手 |
 
 ## 表記の約束
 - 主表現は日本語。英名はコード識別子として併記する（[`event-storming/00-method.md`](event-storming/00-method.md) の表記の約束に従う）。
@@ -161,15 +161,19 @@ record StockAllocated(InventoryItemId inventoryItemId, AllocationId allocationId
 record DeallocateStock(InventoryItemId inventoryItemId, AllocationId allocationId, DeallocationReason reason)
 record StockDeallocated(InventoryItemId inventoryItemId, AllocationId allocationId,
                         Quantity quantity, DeallocationReason reason)
-enum DeallocationReason { ORDER_CANCELLED, EXPIRED }   // 注文取消 / 期限切れ
+enum DeallocationReason { ORDER_CANCELLED, EXPIRED, SHORT_SHIPPED }   // 注文取消 / 期限切れ / 欠品出荷
 ```
 
-| 受付ゲート（拒否条件） | 例外 |
+| コマンド | 挙動 |
 |---|---|
-| 引当IDが未知（二重解除・誤ID） | `UnknownAllocationException` |
+| `DeallocateStock` | 引当IDが未知なら**イベントを発行しない**（冪等）。例外は投げない |
 
 - **全量解除に限る**（部分解除の要求はない。必要になれば M3+ で足す）。イベントには解除された数量を載せる
   （リードモデルがイベント単独で更新できるように＝プロジェクションが集約の状態を引かない）。
+- **冪等にする理由（H17）**: 発行元に**ポリシー P6（引当解放）**が加わり、再送・リプレイでの重複送信がありうるため。
+  凍結・解凍と同じ基準（「同じ結果になる要求は黙って受け入れる」）。「既に解除済み」と「そもそも存在しない」は
+  集約から区別できない。→ [`decisions.md`](decisions.md#h17-宙に浮いた引当を誰が解放するか)
+- `SHORT_SHIPPED` は P6 が出荷側の `SHORTAGE` を写像したもの（③出荷スライス）。
 - 凍結中でも通す。
 - 状態遷移: `allocations.remove(allocationId)`
 
@@ -243,7 +247,7 @@ record StockUnfrozen(InventoryItemId inventoryItemId, StocktakeId stocktakeId)
 | `InsufficientOnHandException` | 払出量 > 手持在庫（H12 の負状態でのみ到達） |
 | `IssueExceedsAllocationException` | 払出量 > その引当の残量 |
 | `DuplicateAllocationException` | 同じ引当IDでの二重引当 |
-| `UnknownAllocationException` | 未知の引当IDの解除・払出 |
+| `UnknownAllocationException` | 未知の引当IDの**払出**（解除は冪等なので投げない。H17） |
 | `InventoryFrozenException` | 凍結中に物理を動かすコマンド（計上・払出） |
 | `AlreadyFrozenException` / `NotFrozenByThisStocktakeException` | 別の棚卸による凍結・解凍・調整（棚の取り合い） |
 | `InvalidQuantityException` | 数量ゼロ等、事実として成立しない数量 |
@@ -263,8 +267,8 @@ M3 で**先に書いて赤にする**（[`.claude/rules/testing.md`](../.claude/
 **不変条件（異常系・`expectException` でイベントを発行しないこと）**
 7. 引当可能を超える引当は拒否される ★コア
 8. 同じ引当IDでの二重引当は拒否される
-9. 未知の引当IDの解除は拒否される
-10. 未知の引当IDの払出は拒否される
+9. 未知の引当IDの払出は拒否される
+10. **未知の引当IDの解除はイベントを発行しない**（冪等。H17）
 11. 引当量を超える払出は拒否される
 12. **手持在庫を超える払出は拒否される**（H12 の帰結）
 13. 数量ゼロの計上・引当・払出は拒否される
@@ -424,8 +428,216 @@ enum ClosureReason { COMPLETED, DAMAGED, SHORTAGE }   // 全量格納 / 破損 /
 
 ---
 
+## 集約③ 出荷（`Shipment`）
+
+**責務**: 1注文ぶんの**引当を消化して倉庫の外へ出す工程**と、それを守る約束。
+「引き当てた以上を棚から取らない」（ピッキング累計 ≤ 引当量）の責任者。
+在庫の残高そのものは持たず、**減らすのは在庫集約**（ポリシー P3 経由。H7）。
+
+- **出荷は複数SKUを持つ**。入荷が1SKU（H13）なのと非対称だが、かたまりを分ける軸が
+  **入荷＝SKU／出荷＝顧客（注文）** と違うだけで、矛盾ではない（H9 = 注文単位）。
+- 出荷指示は上流からの**薄い外部トリガ**。明細は**引当済みのもの**として渡される
+  （引当は先に P2 が済ませている）。
+
+### 状態
+
+```
+Shipment
+  id        : ShipmentId                 // 集約識別子
+  lines     : Map<AllocationId, Line>    // 出荷明細（引当1件 = 明細1件）
+              Line { inventoryItemId : InventoryItemId
+                     allocatedQty    : Quantity     // 引当量（指示後は不変）
+                     pickedQty       : Quantity }   // ピッキング累計
+  shipped   : boolean                    // 出荷済み（終端）
+  cancelled : boolean                    // 取消済み（終端）
+
+  // 導出値（フィールドに持たない）
+  line.remaining   = allocatedQty - pickedQty      // 未ピッキング残。★ 常に ≥ 0
+  fullyPicked      = 全 line で remaining == 0
+  pickedTotal      = Σ pickedQty                   // 棚から取った総量
+  finished         = shipped || cancelled
+```
+
+- **残量を持たず累計を持つ**のは入荷（`putAwayQty`）と同じ流儀。これにより
+  「一部だけ取る → 補充を待つ → 残りを取る」が**追加の仕組みなしで**表せる（H15）。
+- **進捗（指示済／ピッキング中／出荷済）を enum で持たない**。すべて上の導出値で読める。
+  分析時に想定していた `ShipmentStatus` は不採用（H15 の帰結）。
+- **終端が2つある**理由: 出荷と取消は「物が倉庫を出たか出ていないか」という別の事実であり、
+  入荷のようには1イベントに束ねられない（H16）。
+
+### 不変条件と、その強制点
+
+| 不変条件 | 強制点 | 備考 |
+|---|---|---|
+| **ピッキング累計 ≤ 引当量**（未ピッキング残 ≥ 0） | `PickStock` の受付ゲート（`未ピッキング残 ≥ ピック量`） | 引き当てた以上を棚から取らない |
+| 終端後は動かない | `PickStock` / `ShipStock` / `CancelShipment` の受付ゲート | 出荷済み・取消済みの出荷は不変 |
+| 何も取っていない出荷は出荷できない | `ShipStock` の受付ゲート（`pickedTotal > 0`） | 0個出荷は事実として成立しない（H16） |
+| ピッキング済みの出荷は取り消せない | `CancelShipment` の受付ゲート | 棚へ戻す工程が別に要る（本PoC範囲外） |
+| 明細は指示後に変わらない | 変更コマンドを持たない | 訂正が要るなら取り消して指示し直す |
+
+### コマンド → 受付ゲート → イベント → 状態遷移
+
+#### 1. 出荷を指示する（`RequestShipment`）— 起点: 外部トリガ（受注 / Ordering）
+
+```java
+record ShipmentLine(AllocationId allocationId, InventoryItemId inventoryItemId, Quantity quantity)
+
+record RequestShipment(ShipmentId shipmentId, List<ShipmentLine> lines)
+record ShipmentRequested(ShipmentId shipmentId, List<ShipmentLine> lines)
+```
+
+| 受付ゲート（拒否条件） | 例外 |
+|---|---|
+| 明細が空 | `EmptyShipmentException` |
+| 同じ引当IDが明細に重複 | `DuplicateShipmentLineException` |
+| 数量ゼロの明細を含む | `InvalidQuantityException` |
+
+- **明細はコマンドに載せて渡す**。集約が引当ビュー（`AllocationView`）を引くことはしない
+  （[`.claude/rules/cqrs-projection.md`](../.claude/rules/cqrs-projection.md)。引当先の選定は P2 の責務で、
+  ここに来る時点で `(AllocationId, InventoryItemId, 数量)` は確定している）。
+- **集約の誕生**: コンストラクタコマンド（入荷と同じく `ShipmentId` を外から与えられて1回だけ生まれる）。
+  同一IDの二重指示はイベントストアの一意性制約で拒否される。
+- 状態遷移: 各明細を `allocatedQty = quantity` / `pickedQty = ZERO` で登録。`shipped = cancelled = false`
+
+#### 2. ピッキングする（`PickStock`）— 起点: 倉庫作業者（ピッキング担当）
+
+```java
+record PickStock(ShipmentId shipmentId, AllocationId allocationId, Quantity quantity)
+record StockPicked(ShipmentId shipmentId, AllocationId allocationId,
+                   InventoryItemId inventoryItemId, Quantity quantity)
+```
+
+| 受付ゲート（拒否条件） | 例外 |
+|---|---|
+| 数量がゼロ | `InvalidQuantityException` |
+| 出荷済み／取消済み | `ShipmentFinishedException` |
+| 引当IDが明細に無い | `UnknownShipmentLineException` |
+| **ピック量 > 未ピッキング残** | **`PickExceedsAllocationException`** ← 不変条件 |
+
+- **部分ピッキングを許す**。棚に引当量ぶんの現物がないのは H12 と同根の事故で低頻度だが、
+  そのために作業を止めない。残りは後から取れる（同じコマンドを再度送る）。
+  **判断の理由・却下した選択肢（Nothing or All 案／一括ピッキング案）は
+  [`decisions.md`](decisions.md#h15-ピッキングの完了条件) を参照。**
+- **明細1件（引当1件）単位**。まとめて送らないので、P3 は `StockPicked` 1件 → `IssueStock` 1件の
+  単発伝播のままでいられる（P1 と対称）。
+- イベントに `inventoryItemId` を載せるのは、**P3 が出荷集約を引かずに `IssueStock` を組み立てられる**ようにするため
+  （P1 が `StockPutAway` に `sku` を載せたのと同じ理由）。
+- 状態遷移: `line.pickedQty += quantity`
+
+#### 3. 出荷する（`ShipStock`）— 起点: 倉庫作業者（出荷担当）
+
+```java
+record ShipStock(ShipmentId shipmentId, ShipmentCompletion completion)
+record StockShipped(ShipmentId shipmentId, List<ShipmentLine> shippedLines,
+                    List<ShipmentLine> unshippedLines, ShipmentCompletion completion)
+enum ShipmentCompletion { COMPLETE, SHORTAGE }   // 全量出荷 / 欠品を残して完了
+```
+
+| 受付ゲート（拒否条件） | 例外 |
+|---|---|
+| 出荷済み／取消済み | `ShipmentFinishedException` |
+| 1件もピッキングしていない（`pickedTotal == 0`） | `NothingPickedException` |
+| 未ピッキング残あり かつ `COMPLETE` | `ShipmentNotFullyPickedException` |
+| 未ピッキング残なし かつ `SHORTAGE` | `InvalidCompletionException` |
+
+- **残高は動かさない**。手持在庫・引当済はピッキング時に確定済み（H7）。このイベントは
+  「物が倉庫を出た」という事実だけを表す。
+- **欠品を残したまま完了できる**。ただし人が `SHORTAGE` を**明示**する（H16）。
+  「部分でよいか全量必要か」を決めるのは顧客（上流）であり、集約は許すだけで決めない。
+  全量必要なら**このコマンドを打たずに**補充を待ち、残りをピッキングしてから `COMPLETE` で打つ。
+- **`COMPLETE` をコマンドで指定できる**のは入荷（`COMPLETED` は自動発行専用 / H14）と**逆**。
+  出荷は残ゼロでも「これで終わりにする」という人の意思が入るため。
+  → [`decisions.md`](decisions.md#h16-欠品したまま終わる出荷の終わらせ方)
+- `shippedLines` / `unshippedLines` を載せる理由: 下流（リードモデル・**P6**）が
+  出荷集約を引かずに処理できるようにするため。
+- 状態遷移: `shipped = true`
+
+#### 4. 出荷を取り消す（`CancelShipment`）— 起点: 外部トリガ（注文取消）・タイマー（期限切れ）
+
+```java
+record CancelShipment(ShipmentId shipmentId, CancellationReason reason)
+record ShipmentCancelled(ShipmentId shipmentId, List<ShipmentLine> cancelledLines,
+                         CancellationReason reason)
+enum CancellationReason { ORDER_CANCELLED, EXPIRED }   // 注文取消 / 期限切れ
+```
+
+| 受付ゲート（拒否条件） | 例外 |
+|---|---|
+| 出荷済み／取消済み | `ShipmentFinishedException` |
+| **1件でもピッキング済み**（`pickedTotal > 0`） | **`AlreadyPickedException`** ← 不変条件 |
+
+- **ピッキング前に限る**。既に棚から取っていたら、物を棚へ戻す工程（`StockReturned` 相当）が要るが、
+  これは H5（ロケーション間の在庫移動）と同型の未導入概念なので**M3+ の改修シナリオ候補**へ送る。
+  現時点では「取れる分を出荷して `SHORTAGE` で閉じる」経路がある。
+- `cancelledLines` は**全明細**（まだ1件も消化していないため）。P6 がこれを見て引当を解放する。
+- 状態遷移: `cancelled = true`
+
+### 例外一覧
+
+| 例外 | 意味 |
+|---|---|
+| `PickExceedsAllocationException` | ピック量 > 未ピッキング残。**出荷の不変条件違反** |
+| `AlreadyPickedException` | ピッキング済みの出荷への取消要求 |
+| `ShipmentFinishedException` | 終端（出荷済み・取消済み）の出荷への操作 |
+| `NothingPickedException` | 1件もピッキングしていない出荷の出荷要求（0個出荷） |
+| `ShipmentNotFullyPickedException` | 未ピッキング残があるのに `COMPLETE` を指定 |
+| `InvalidCompletionException` | 未ピッキング残が無いのに `SHORTAGE` を指定 |
+| `UnknownShipmentLineException` | 明細に無い引当IDへのピッキング |
+| `EmptyShipmentException` / `DuplicateShipmentLineException` | 空の明細／引当IDの重複した出荷指示 |
+| `InvalidQuantityException` | 数量ゼロ（在庫・入荷スライスと共有） |
+
+### 在庫集約との接続（ポリシー P3 / P6）
+
+```
+StockPicked                  → P3（出庫反映）  → IssueStock(inventoryItemId, allocationId, quantity)
+StockShipped(未出荷残あり)    → P6（引当解放）  → DeallocateStock(..., SHORT_SHIPPED)   × 残明細
+ShipmentCancelled            → P6（引当解放）  → DeallocateStock(..., 取消理由を写像)   × 全明細
+```
+
+**P6 は出荷スライスで新規に見つかったポリシー**（H17）。放置すると在庫側の引当済が減らず
+**引当可能が永久に目減りする**ため必要になった。P6 は残明細の数だけコマンドを送る **1:N** だが、
+**状態を持たないので Saga ではない**（P5 との違いは fan-out の有無ではなく途中状態の有無）。
+BC 間の語彙の写像（`SHORTAGE` → `SHORT_SHIPPED` 等）も P6 が担う。
+
+> **未決（⑤ ポリシースライスで決める）**: ピッキング先の在庫が**凍結中**だと `IssueStock` は拒否される
+> （`InventoryFrozenException`）。このとき出荷側は棚から取っているのに在庫が減らない**片落ち**が残る。
+> **これは P1（格納伝播）で残した片落ちと完全に同型**（入口と出口で対称に発生する）。扱い方は ⑤ でまとめて決着させる。
+> 関連: [`decisions.md`](decisions.md#h11-棚卸中の引当をどこまで許すか) H11「既知のリスク」。
+
+### テスト骨子（Axon `AggregateTestFixture` / Given-When-Then）
+
+**正常系**
+1. 出荷を指示すると出荷が生まれ、各明細の未ピッキング残が引当量と等しくなる
+2. 全量をピッキングして出荷すると、全明細が出荷済みで完了する（`COMPLETE`・未出荷残なし）
+3. 明細ごとに分けてピッキングできる（複数SKU）
+
+**不変条件（異常系・`expectException` でイベントを発行しないこと）**
+4. 未ピッキング残を超えるピッキングは拒否される ★不変条件
+5. 明細に無い引当IDへのピッキングは拒否される
+6. 数量ゼロのピッキングは拒否される
+7. 空の明細での出荷指示は拒否される
+8. 同じ引当IDを重複して含む出荷指示は拒否される
+9. 出荷済み・取消済みの出荷へのピッキングは拒否される
+
+**部分ピッキング（H15）**
+10. 引当量に満たないピッキングが通り、未ピッキング残が残る
+11. **残りを後からピッキングすると全量ピッキング済みになる**（補充を待つ経路）
+12. 部分ピッキングのまま `COMPLETE` で出荷しようとすると拒否される
+
+**欠品での完了・取消（H16）**
+13. 未ピッキング残を残したまま `SHORTAGE` で出荷すると、**出荷明細と未出荷明細を持つ**イベントが出る
+14. 未ピッキング残が無いのに `SHORTAGE` を指定すると拒否される
+15. 1件もピッキングせずに出荷しようとすると拒否される
+16. ピッキング前なら出荷を取り消せ、**全明細が取消明細として**イベントに乗る
+17. 1件でもピッキング済みなら取消は拒否される ★不変条件
+18. 取消済みの出荷の二重取消は拒否される
+
+---
+
 ## 以降のスライス（未着手）
 
-- ③ 出荷（`Shipment`）… 状態遷移 出荷指示 → ピッキング → 出荷。引当明細（`AllocationId`）を持つ形になるはず（在庫側と接続する）。
 - ④ 棚卸（`Stocktake`）… 差異を持たない。対象ロケーションの列挙とカウント。
-- ⑤ ポリシー P1〜P4（`@EventHandler` → `CommandGateway`）／サーガ P5／リードモデル4種のスキーマ。
+- ⑤ ポリシー P1〜P4・**P6**（`@EventHandler` → `CommandGateway`）／サーガ P5／リードモデル4種のスキーマ。
+  - **持ち越しの論点（同型の片落ち2件をまとめて決着させる）**:
+    P1 で格納先が凍結中 → `PlaceStock` 拒否／P3 でピッキング先が凍結中 → `IssueStock` 拒否。
+    リトライ／デッドレター／運用で防ぐ、のどれを採るか。
