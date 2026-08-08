@@ -74,9 +74,15 @@ docker compose -f infra/docker-compose.yml ps       # dynamodb / postgres が Up
 ./gradlew :warehouse-app:bootRun                    # http://localhost:8080
 ```
 
-## 4.5 機密混入ガード（pre-commit / gitleaks）
+## 4.5 コミット時のガード（pre-commit / gitleaks・ドキュメント整合）
 
-AWS キー・トークン・秘密鍵などが誤ってコミットされるのを防ぐため、`gitleaks` によるステージ差分スキャンを pre-commit フックで実行する。フック本体は `.githooks/pre-commit`（リポジトリで追跡）。`core.hooksPath` はローカル設定で追跡されないため、**clone 後に一度だけ各自で有効化**する。
+pre-commit フックで2つを検査する。フック本体は `.githooks/pre-commit`（リポジトリで追跡）。
+`core.hooksPath` はローカル設定で追跡されないため、**clone 後に一度だけ各自で有効化**する。
+
+| 検査 | 内容 | 必要なもの |
+|---|---|---|
+| 機密混入 | AWS キー・トークン・秘密鍵などのステージ差分スキャン | `gitleaks`（未導入だとコミットを止める＝fail-closed） |
+| ドキュメント整合 | ADR の採番・アンカー切れ・用語の波及漏れ（`.md` を含むコミットのみ実行） | `python3`（macOS 標準。無ければ警告してスキップ） |
 
 ```bash
 # 1) gitleaks を導入（未導入だとフックがコミットを止める＝fail-closed）
@@ -92,6 +98,9 @@ git config core.hooksPath .githooks
 - 検出されるとコミットは中断する。該当箇所を除外して再コミットする。
 - 誤検出はリポジトリルートの `.gitleaks.toml`（allowlist）で除外できる（現状は未使用）。
 - どうしても回避が必要な場面のみ `git commit --no-verify`（原則使わない）。
+- ドキュメント整合は単体でも回せる: `python3 scripts/check-docs.py`。
+  何を見て何を見ないかは [`.claude/rules/doc-consistency.md`](../.claude/rules/doc-consistency.md)、
+  位置づけは [`plan.md`](plan.md) の「ガード / 品質ゲートの整備」#4。
 - Terraform の `*.tfstate` / `*.tfvars` / `.env` / 秘密鍵などは `.gitignore` でも二重に除外済み（M8 の実クレデンシャル対策の下地）。
 
 ## 5. 動作確認（期待される結果）

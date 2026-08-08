@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 #
-# pre-commit: ステージ済み差分に混入した機密（AWSキー/トークン/秘密鍵等）を gitleaks で検出しコミットを止める。
+# pre-commit:
+#   (1) ステージ済み差分に混入した機密（AWSキー/トークン/秘密鍵等）を gitleaks で検出する
+#   (2) docs/ の機械的な不整合（ADR採番・アンカー切れ・用語の波及漏れ）を検出する
+#   いずれも検出したらコミットを止める。
 # 有効化: リポジトリルートで `git config core.hooksPath .githooks`（初回のみ / clone 後も各自で実行）。
 # 一時回避（原則使わない）: `git commit --no-verify`
 #
 set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "❌ pre-commit: gitleaks が未インストールのため機密スキャンを実行できません。" >&2
@@ -19,4 +24,16 @@ if ! gitleaks git --staged --redact --no-banner --verbose; then
   echo "❌ pre-commit: 機密の疑いがある内容が検出されました。上記箇所を確認し、コミットから除外してください。" >&2
   echo "   誤検出の場合は .gitleaks.toml の allowlist で除外できます。" >&2
   exit 1
+fi
+
+# ドキュメント整合チェック（ガード #4 / ルール: .claude/rules/doc-consistency.md）
+# .md をひとつも触っていないコミットではスキップする。
+if git diff --cached --name-only --diff-filter=ACM | grep -q '\.md$'; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "⚠️  pre-commit: python3 が無いためドキュメント整合チェックをスキップしました。" >&2
+  elif ! python3 "$ROOT/scripts/check-docs.py"; then
+    echo "" >&2
+    echo "❌ pre-commit: ドキュメントに不整合があります。上記を修正してください。" >&2
+    exit 1
+  fi
 fi

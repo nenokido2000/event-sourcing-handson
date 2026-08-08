@@ -124,6 +124,9 @@ event-sourcing/
 
 機密混入と TDD/ATDD 遵守を「機構」で担保する。原則: **決定的に検出できるもの（機密混入・テスト不在/失敗）は決定的機構（pre-commit / hook / CI）で強制。プロセス（test-first 等）は skill 既定＋レビューで誘導**（強制不能なものを hook で強制しようとしない）。認知負荷(A優先)を考え、安い順・必要になる直前で足す。
 
+> **#番号は追加順の安定した ID** であり、実施順ではない（節内から `#3` のように参照するため振り直さない）。
+> 実施時期は各項の見出しの括弧（済 / M3 前後 / M8 直前）で読む。
+
 - **#1 機密混入ガード（済 / 2026-07-25 導入）**: `.gitignore` に Terraform state/tfvars・`.env`・秘密鍵等を追加。`gitleaks` を **pre-commit フック（`.githooks/pre-commit`, `core.hooksPath=.githooks`）** で走らせ、ステージ差分の機密を検出しコミットを停止（fail-closed）。手順は `docs/setup.md` 4.5。
 - **#2 TDD/ATDD 遵守ゲート（M3 前後で実施）**:
   - `add-aggregate` skill を **test-first の既定動作**に（①失敗するFixtureを生成→②`gradlew test`で赤を見せる→③最小実装で緑→④整理）。`add-projection` も同様。
@@ -134,6 +137,10 @@ event-sourcing/
   - **構造的回避**（最優先）: AWS **SSO/OIDC の短命クレデンシャル**を使い静的キーを作らない。RDS パスワード等は **Secrets Manager / SSM**。**S3 リモート state（暗号化＋バケット非公開）＋ DynamoDB ロック**にして tfstate を repo に落とさない（M8 の「local か S3 か」はこの方針で S3 に倒す）。
   - **CI バックストップ**: GitHub Actions に **gitleaks ジョブ**（`--no-verify` 抜け対策）＋ **GitHub secret scanning / push protection 有効化**。ATDD 全 Spec もここで実行。
   - （任意）Claude PreToolUse hook で `Edit/Write(*.tf)`・`Bash(git commit)` 時に速報スキャン（本命は pre-commit + CI、これは速報の補助）。
+- **#4 ドキュメント整合ガード（済 / 2026-08-09 導入 ← M2 途中で必要になったため前倒し）**: `docs/` の肥大化に伴い「手で書いた値が他所とズレる」腐り方が実際に複数回発生したため導入。ルールは [`.claude/rules/doc-consistency.md`](../.claude/rules/doc-consistency.md)。
+  - **構造で消す**（コード不要・最優先）: ①**導出できる値を書かない**（集計値「ポリシーは5本」・採番「次は H13〜」）②**同じ情報を2か所に持たない**（M2 スライス進捗の正は `tactical-design.md` 冒頭表のみ。README はマイルストーン粒度＋リンク）。
+  - **決定的チェック**（`scripts/check-docs.py` / python3 のみ・1秒未満）: ①`decisions.md` の `## Hn` 見出しと一覧表の行が集合一致するか ②`](file.md#anchor)` が実在見出しに解決するか ③`ubiquitous-language.md` 定義済みポリシー番号が波及先文書に現れるか／未定義番号を参照していないか。**pre-commit（#1 と同じ場所）と Stop フックの両方**で実行。
+  - **機械化しないもの**: 意味の矛盾（新しい決定が既存記述と噛み合わない）は非決定的なのでレビュー（`es-domain-reviewer` ＋人）に寄せる。#2 と同じ「決定的なものだけ機構で強制」の線引き。
 
 ## 未決・後続で判断（ブロッカーではない）
 - PHPフレームワークの具体選定（M7）。

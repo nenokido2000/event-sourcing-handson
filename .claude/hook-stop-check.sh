@@ -1,16 +1,37 @@
 #!/bin/bash
-# Stop: 応答完了時に (1) ./gradlew test (2) es-domain-reviewer のレビューゲート を検証する。
-# Gradle雛形が未生成の間はゲート全体を no-op（M0で有効化）。
+# Stop: 応答完了時に (1) ドキュメント整合 (2) ./gradlew test (3) es-domain-reviewer のレビューゲート を検証する。
+# (2)(3) は Gradle雛形が未生成の間は no-op（M0で有効化）。(1) は分析フェーズから有効。
 INPUT=$(cat)
 STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false')
 TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty')
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# gradlew が無ければまだ足場が無いのでスキップ
-[ -x "$ROOT/gradlew" ] || exit 0
-
 FAILURES=()
+
+# ドキュメント整合チェック（ガード #4 / ルール: .claude/rules/doc-consistency.md）
+if command -v python3 >/dev/null 2>&1 && [ -f "$ROOT/scripts/check-docs.py" ]; then
+  DOC_OUT=$(python3 "$ROOT/scripts/check-docs.py" 2>&1)
+  if [ $? -ne 0 ]; then
+    FAILURES+=("ドキュメントに不整合があります。修正してください:
+$DOC_OUT")
+  fi
+fi
+
+# gradlew が無ければまだ足場が無いので、以降（テスト・レビューゲート）はスキップ
+if [ ! -x "$ROOT/gradlew" ]; then
+  if [ ${#FAILURES[@]} -eq 0 ]; then
+    exit 0
+  fi
+  REASON=$(printf '%s\n' "${FAILURES[@]}")
+  if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
+    jq -n --arg msg "修正後もチェックに失敗しています:
+$REASON" '{systemMessage: $msg}'
+    exit 0
+  fi
+  jq -n --arg reason "$REASON" '{decision: "block", reason: $reason}'
+  exit 2
+fi
 
 ./gradlew test > .claude/stop-check.log 2>&1
 if [ $? -ne 0 ]; then

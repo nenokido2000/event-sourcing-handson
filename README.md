@@ -69,12 +69,9 @@ event-sourcing-handson/
 - ✅ 計画（[`docs/plan.md`](docs/plan.md)）とステアリング機構の整備
 - ✅ M0: 足場（Gradle マルチモジュール雛形 / docker-compose / 機密混入ガード）
 - ✅ M1: 倉庫の戦略設計 — イベントストーミング3段（[`docs/event-storming/`](docs/event-storming/)）、[`コンテキストマップ`](docs/context-map.md)、[`ユビキタス言語表`](docs/ubiquitous-language.md)。集約4つ・ポリシーP1〜P5・コアサブドメイン（在庫引当）を確定
-- 🔄 M2: 倉庫の戦術設計（[`docs/tactical-design.md`](docs/tactical-design.md)）← 進行中。**1集約1スライス**で型レベルまで落とす（決定は [`docs/decisions.md`](docs/decisions.md) に H番号で記録）
-  - ✅ ① 在庫（`InventoryItem`／コア）… 引当明細・受付ゲート・例外・テスト骨子を確定。H8/H12 決着
-  - ✅ ② 入荷（`InboundReceipt`）… 1入荷=1SKU・分割格納・クローズ表現を確定。H13/H14 決着
-  - ✅ ③ 出荷（`Shipment`）… 部分ピッキング・欠品完了・取消を確定。H15/H16/H17 決着（**ポリシーが P6 追加で6本に**）
-  - ⬜ ④ 棚卸（`Stocktake`）← 次はここ
-  - ⬜ ⑤ ポリシー P1〜P6 / リードモデル … 持ち越し論点＝凍結中在庫への片落ち2件（P1 入口 / P3 出口）
+- 🔄 M2: 倉庫の戦術設計 ← 進行中。**1集約1スライス**で型レベルまで落とす
+  - **スライス別の進捗は [`docs/tactical-design.md`](docs/tactical-design.md) の冒頭表**（進捗の正はそこだけ。ここには写さない）
+  - 決定は [`docs/decisions.md`](docs/decisions.md) に H番号で記録する
 - ⬜ M3〜: 実装（TDD＋ATDD の二重ループ）以降、上記ロードマップに沿って進行
 
 ## セットアップ / 動作確認（M0 以降）
