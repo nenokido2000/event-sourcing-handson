@@ -791,9 +791,11 @@ StocktakeClosed   → P5（棚卸凍結）→ UnfreezeStock(inventoryItemId, sto
 - 対象在庫の列挙は結果整合なので**凍結漏れ**しうるが、未凍結でも `AdjustStock` は通す
   （数えた事実を捨てない。H11 の既知のリスク／H12）。
 
-> **未決（⑤ ポリシースライスで決める）**: 調整先の在庫が**別の棚卸で凍結中**だと `AdjustStock` は拒否される
-> （`NotFrozenByThisStocktakeException`）。棚卸側は数えたのに在庫へ反映されない**片落ち**が残る。
-> **P1（格納先が凍結中）・P3（ピッキング先が凍結中）と完全に同型で、これで3件目**。⑤ でまとめて決着させる。
+> **決着済み（⑤ ポリシースライス）**: 調整先の在庫が**別の棚卸で凍結中**だと `AdjustStock` は拒否される
+> （`NotFrozenByThisStocktakeException`）。拒否された事実は**棚卸干渉ビュー**（`StocktakeInterferenceView`）に積み、
+> 人が「再投入」か「破棄」かを判断する（[H22](decisions.md#h22-凍結中に拒否された在庫反映の行き先)）。
+> ただし P1・P3 とは原因が違い（棚卸 vs 棚卸の衝突）、**予防は `StartStocktake` の前段で重複開始を弾く**
+> （[H23](decisions.md#h23-棚卸の重複開始)）。
 
 ### テスト骨子（Axon `AggregateTestFixture` / Given-When-Then）
 
