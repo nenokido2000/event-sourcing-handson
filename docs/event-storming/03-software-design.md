@@ -4,6 +4,10 @@
 > この段の狙い: 集約候補の確定、**境界づけられたコンテキスト(BC)**とコンテキストマップ、
 > **コアサブドメイン**の特定、**ユビキタス言語**の確定。関連成果物は
 > [`../context-map.md`](../context-map.md) と [`../ubiquitous-language.md`](../ubiquitous-language.md)。
+>
+> ⚠ **この文書は M1 時点の分析記録**。後から決まったことで表・図は書き換えず、注記だけを足している
+> （何がいつ見えたかという順序自体が学習素材のため）。**現在の集約・ポリシー・リードモデルの一覧は
+> [`../ubiquitous-language.md`](../ubiquitous-language.md)、決定の正は [`../decisions.md`](../decisions.md) が正**。
 
 ## 集約の判定基準
 
