@@ -13,7 +13,7 @@
 > | ② 入荷（`InboundReceipt`） | **確定**（2026-08-05） |
 > | ③ 出荷（`Shipment`） | **確定**（2026-08-09） |
 > | ④ 棚卸（`Stocktake`） | **確定**（2026-08-09） |
-> | ⑤ ポリシー P1〜P6 / リードモデル | 未着手 |
+> | ⑤ ポリシー P1〜P6 / リードモデル | **進行中**（サーガ P5 = 確定 2026-08-11） |
 
 ## 表記の約束
 - 主表現は日本語。英名はコード識別子として併記する（[`event-storming/00-method.md`](event-storming/00-method.md) の表記の約束に従う）。
@@ -828,11 +828,92 @@ StocktakeClosed   → P5（棚卸凍結）→ UnfreezeStock(inventoryItemId, sto
 
 ---
 
+## サーガ P5 棚卸凍結（`StocktakeFreezeSaga`）
+
+> ⑤ ポリシースライスの一部。ポリシー P1〜P4・P6 とリードモデルのスキーマは続けて確定する。
+> **本PoCで状態を持つのはこの P5 だけ**（ほかは状態なしの `...Policy`）。
+
+責務は、棚卸の対象ロケーションにある在庫を**開始時に凍結し、クローズ時に元へ戻す**こと。
+Saga である理由（対象の**列挙**・凍結し終わるまでの**途中状態**・**未解凍がどれか**を覚える主体）は
+[`ubiquitous-language.md`](ubiquitous-language.md) の語尾の約束と H11 を参照。
+状態と終わり方は [H27](decisions.md#h27-棚卸凍結サーガの状態と終わり方) で確定。
+
+### 状態
+
+```java
+StocktakeId stocktakeId;              // 関連付けキー（associationProperty）
+Set<InventoryItemId> targets;         // 開始時に列挙した対象。以降変えない
+Set<InventoryItemId> frozen;          // StockFrozen を受けた ＝ 実際に凍結できた
+Set<InventoryItemId> unfrozen;        // StockUnfrozen を受けた
+boolean closeRequested;               // StocktakeClosed を受けたか
+```
+
+導出値（状態に持たない）:
+
+| 名前 | 定義 | 用途 |
+|---|---|---|
+| 凍結確認待ち | `targets − frozen` | 空になるまで終了しない |
+| 解凍確認待ち | `frozen − unfrozen` | 空になるまで終了しない |
+
+- **`targets` と `frozen` は一致するとは限らない**（凍結が拒否される経路がある。後述）。
+  **解凍すべき集合は `frozen`** であって `targets` ではない。H27 の要点はこの区別。
+
+### イベント → 振る舞い
+
+| 受け取るイベント | Saga の動き |
+|---|---|
+| `StocktakeStarted`（**`@StartSaga`**） | 対象を列挙して `targets` に固定 → 各件へ `FreezeStock` |
+| `StockFrozen` | `frozen` に加える。`closeRequested` なら**その場で** `UnfreezeStock` を送る |
+| `StocktakeClosed` | `closeRequested = true`。**`frozen` のうち未解凍の分にだけ** `UnfreezeStock` を送る |
+| `StockUnfrozen` | `unfrozen` に加える。終了条件を満たせば **`@EndSaga`** |
+
+終了条件: `closeRequested` かつ 凍結確認待ちが空 かつ 解凍確認待ちが空。
+
+- `StocktakeClosed` 時点で凍結が未確認の分へは**解凍を送らない**。`StockFrozen` の到着を待って送る。
+  コマンドバスは順序を保証しないため、即送すると「解凍→凍結」と逆転して**在庫が凍結されたまま残る**
+  （H27 ②。`closeRequested` を状態に持つのはこのため）。
+- クローズ理由（数え終えた `COMPLETED` / 中断 `ABORTED`）で振る舞いは**変わらない**。
+  どちらも解凍するだけで、既に伝わったカウントの反映は取り消さない（[H20](decisions.md#h20-カウントを在庫へ伝えるタイミング)）。
+- `targets` が空でも Saga は開始し、クローズで終了する（対象ロケーションに在庫が1件も無い棚卸は成立する）。
+
+### 対象在庫の列挙
+
+- **引当可能在庫ビュー**（`AvailableStockView`）を `locations` で引き、`InventoryItemId` の集合を得る。
+  棚卸集約は他集約を知らないので、Saga がリードモデルを見る。
+- **開始時に1回だけ**（H27 ①）。列挙はリードモデル＝結果整合なので**凍結漏れ**しうるが、
+  未凍結でも `AdjustStock` は通す（数えた事実を捨てない。H11 の既知のリスク／H12）。
+- 棚卸中に対象ロケーションへ**新しい SKU の在庫集約が生まれうる**（凍結済みの集約は `PlaceStock` を
+  拒否するが、未存在の SKU×ロケーションは新規作成される）。これは凍結対象に入らないが、
+  非凍結なので `AdjustStock` は通る（[H18](decisions.md#h18-棚卸は数える対象の母集合を持つか) と整合）。
+
+### 終わらない Saga（既知の穴）
+
+`FreezeStock` が `AlreadyFrozenException`（別の棚卸が同じ棚を凍結中）で失敗すると、在庫集約は
+**例外を投げるだけでイベントを出さない**ので `StockFrozen` が来ず、凍結確認待ちが空にならない。
+
+- [H23](decisions.md#h23-棚卸の重複開始)（開始の前段で重複を弾く）の予防をすり抜けたときにだけ起きる。
+- **終わらない Saga をそのまま異常の検知シグナルとして扱う**（黙って終わらせない）。H27 ③。
+- デッドラインによる打ち切り・自動リトライは **M3+ 改修シナリオ候補**。
+
+### テスト骨子（Axon `SagaTestFixture` / Given-When-Then）
+
+**正常系**
+1. 棚卸が開始されると、対象在庫の数だけ `FreezeStock` が送られる
+2. 全件凍結 → クローズ → 全件解凍 → **Saga が終了する**
+3. 対象が0件でも開始でき、クローズで終了する
+4. 中断（`ABORTED`）でも解凍の振る舞いは同じ
+
+**順序と途中状態（H27 の要点）**
+5. **凍結が未確認の分へは、クローズ時に `UnfreezeStock` を送らない** ★逆転防止
+6. 5 の後に `StockFrozen` が届くと、**そこで初めて** `UnfreezeStock` が送られる
+7. **解凍が全件確認されるまで Saga は終了しない**
+8. 凍結できなかった在庫（`StockFrozen` が来ない）があると、**Saga は終了しない**（既知の穴）
+
+**冪等**
+9. 同じ `StockFrozen` が二重に届いても `UnfreezeStock` を重複送信しない
+
+---
+
 ## 以降のスライス（未着手）
 
-- ⑤ ポリシー P1・P2・P3・P4・**P6**（`@EventHandler` → `CommandGateway`）／サーガ P5／リードモデル4種のスキーマ。
-  - **持ち越しの論点（同型の片落ち3件をまとめて決着させる）**:
-    P1 で格納先が凍結中 → `PlaceStock` 拒否／P3 でピッキング先が凍結中 → `IssueStock` 拒否／
-    P4 で調整先が**別の棚卸で**凍結中 → `AdjustStock` 拒否。
-    いずれも「現場の作業は完了しているのに在庫帳簿だけが取り残される」形。
-    リトライ／デッドレター／運用で防ぐ、のどれを採るか。
+- ⑤ の残り: ポリシー P1・P2・P3・P4・**P6**（`@EventHandler` → `CommandGateway`）／リードモデルのスキーマ。
