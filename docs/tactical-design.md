@@ -13,7 +13,7 @@
 > | ② 入荷（`InboundReceipt`） | **確定**（2026-08-05） |
 > | ③ 出荷（`Shipment`） | **確定**（2026-08-09） |
 > | ④ 棚卸（`Stocktake`） | **確定**（2026-08-09） |
-> | ⑤ ポリシー P1〜P6 / リードモデル | **進行中**（サーガ P5 = 確定 2026-08-11） |
+> | ⑤ ポリシー P1〜P6 / リードモデル | **進行中**（サーガ P5・リードモデル = 確定 2026-08-11 / 残: ポリシー P1〜P4・P6） |
 
 ## 表記の約束
 - 主表現は日本語。英名はコード識別子として併記する（[`event-storming/00-method.md`](event-storming/00-method.md) の表記の約束に従う）。
@@ -914,6 +914,143 @@ boolean closeRequested;               // StocktakeClosed を受けたか
 
 ---
 
+## リードモデル
+
+> ⑤ ポリシースライスの一部。顔ぶれと読み手の正は [`ubiquitous-language.md`](ubiquitous-language.md)、
+> 作り方の決定は [H28](decisions.md#h28-リードモデルの作り方)。
+> クエリ側にビジネスルールを置かない・用途ごとに分ける（[`cqrs-projection.md`](../.claude/rules/cqrs-projection.md)）。
+
+### 冪等性の担保（全ビュー共通の約束）
+
+| ビューの形 | 担保の仕方 | 対象 |
+|---|---|---|
+| 追記専用 | **イベントIDに一意制約** → insert-or-ignore | 在庫元帳ビュー |
+| 集計 | **行ごとに最終適用位置**（`lastEventPosition`）を持ち、`<=` なら無視 | 引当可能在庫 / 引当 / 棚卸差異 |
+
+以下のスキーマでは `lastEventPosition` を集計系ビューの共通列として省略せず書く。
+
+### 引当可能在庫ビュー（`AvailableStockView`）
+
+読み手: P2 の引当先選定（H25 best-fit）／P5 の対象列挙（H27）／`StartStocktake` の前段バリデーション（H23）。
+
+| 列 | 型 | 備考 |
+|---|---|---|
+| `inventoryItemId` | PK | SKU × ロケーション |
+| `skuId` / `locationId` | | 分解して持つ（検索キー） |
+| `onHand` / `allocated` | `Quantity` | |
+| `available` | `Quantity` | **列に持つ**（導出だが best-fit の絞り込み・並べ替えに使う） |
+| `frozen` | `boolean` | 棚卸中 |
+| `frozenByStocktakeId` | `StocktakeId?` | どの棚卸が握っているか（H28 ②）。`frozen` が偽なら null |
+| `lastEventPosition` | | |
+
+更新元: `StockPlaced` / `StockAllocated` / `StockDeallocated` / `StockIssued` / `StockAdjusted` / `StockFrozen` / `StockUnfrozen`
+
+主なクエリ:
+
+```sql
+-- P2 引当先選定（H25 best-fit ＋ H11 棚卸中は後回し）
+WHERE skuId = ? AND available >= ?  ORDER BY frozen ASC, available ASC  LIMIT 1
+-- P5 対象列挙（H27 ①）
+WHERE locationId IN (?)
+-- H23 前段バリデーション（重複開始の予防・best effort）
+WHERE locationId IN (?) AND frozen
+```
+
+→ 索引は `(skuId, available)` と `(locationId)`。
+
+### 引当ビュー（`AllocationView`）
+
+読み手: 出荷明細の組み立て／P2 の再計画（H26）。
+
+| 列 | 型 | 備考 |
+|---|---|---|
+| `allocationId` | PK | `注文明細ID + ロケーションID`（H26） |
+| `orderLineId` | | **`allocationId` を分解して列に持つ**。H26 の再計画がこれで引く |
+| `inventoryItemId` / `skuId` / `locationId` | | |
+| `quantity` | `Quantity` | |
+| `status` | enum | 引当中 / 払出済 / 解除済 |
+| `shipmentId` | `ShipmentId?` | `ShipmentRequested` で埋まる。null = まだ出荷指示なし |
+| `deallocationReason` | `DeallocationReason?` | 解除済のときだけ |
+| `lastEventPosition` | | |
+
+更新元: `StockAllocated` / `StockDeallocated` / `StockIssued` / `ShipmentRequested`
+
+→ 索引は `(orderLineId)` と `(shipmentId)`。
+
+### 在庫元帳ビュー（`StockLedgerView`）
+
+読み手: 人（履歴の可視化）。**イベントソーシングの旨味を見せる場所**なので、集約せず1イベント1行で残す。
+
+| 列 | 型 | 備考 |
+|---|---|---|
+| `eventId` | PK | **一意制約が冪等性そのもの**（H28 ①） |
+| `globalIndex` | | 並び順 |
+| `occurredAt` | | |
+| `inventoryItemId` / `skuId` / `locationId` | | |
+| `eventType` | enum | 計上 / 引当 / 解除 / 払出 / 調整 / 凍結 / 解凍 |
+| `onHandDelta` / `allocatedDelta` | 符号付き | 動かない側は 0（例: 引当は `onHandDelta = 0`） |
+| `cause` | | `AllocationId` / `StocktakeId` / `ShipmentId` のいずれか |
+
+- **追記専用**。行を更新しないので `lastEventPosition` を持たない。
+
+### 棚卸差異ビュー（`StocktakeVarianceView`）
+
+読み手: 人（棚卸レポート）。**2段で埋まる**（H28 ③）。
+
+| 列 | 型 | 埋まる契機 |
+|---|---|---|
+| `stocktakeId` | PK1 | `StockCounted` |
+| `inventoryItemId` | PK2 | 〃 |
+| `skuId` / `locationId` | | 〃 |
+| `countedQuantity` | `Quantity` | 〃（**数え直しは同じキーを上書き**＝最新が正。H20） |
+| `countedAt` | | 〃 |
+| `bookQuantity` | `Quantity?` | `StockAdjusted`。実地値 − 符号付き差分 で復元（H10） |
+| `variance` | 符号付き? | 〃。帳簿値 − 実地値 |
+| `adjustedAt` | | 〃 |
+| `lastEventPosition` | | |
+
+- **`adjustedAt` が null の行 = 数えたが在庫へ反映されていない**。凍結の干渉で `AdjustStock` が
+  拒否された経路（H22）がここに現れる。差異レポートから消えないことが③の狙い。
+
+### 棚卸干渉ビュー（`StocktakeInterferenceView`）
+
+読み手: 人（H22 の二択）。**このビューだけ性質が違う**ので先に断っておく。
+
+> **⚠ このビューはイベントから再構築できない**（H28 の帰結）。拒否された事実はイベントストアに無い
+> （H22 が「ポリシーがブロックされたイベントを発行する」を却下したため）。行は
+> **ポリシー P1・P3・P4 がコマンド失敗を捕まえて直接書く**。
+> リードモデルというより**運用ワークリスト**。捨てても在庫は正しい（真実の源泉はイベントストアだけ）。
+> 再構築するとこのビューは空になるので、**運用上は再構築の前に未対処分を処理しておく**。
+
+| 列 | 型 | 出どころ |
+|---|---|---|
+| `interferenceId` | PK | 採番 |
+| `occurredAt` | | ポリシー（**非イベント**） |
+| `inventoryItemId` / `skuId` / `locationId` | | 〃 |
+| `blockedCommand` | enum | 〃。`PlaceStock` / `IssueStock` / `AdjustStock` |
+| `quantity` | | 〃。拒否されたコマンドの数量 |
+| `blockedByStocktakeId` | `StocktakeId` | 〃 |
+| `counted` | `boolean` | **`StockCounted` / `StocktakeClosed` 由来**（イベント）。その棚を数えたか |
+| `resolved` / `resolvedAt` | | **人が打つ**（非イベント）。再投入・破棄のどちらでも完了 |
+| `lastEventPosition` | | `counted` 列の更新にだけ効く |
+
+- `counted` が要る理由: 棚卸が中断（`ABORTED`）でその棚を数えなかった場合は**必ず再投入**になる
+  （勝手に治る道がない）。人の二択の判断材料（H22 の帰結）。
+- **イベント由来の列と非イベント由来の列が同居する**唯一のビュー。
+
+### テスト骨子（イベント入力 → リードモデル状態）
+
+1. 各ビューについて、更新元イベントを1本ずつ流して期待どおりの行になる
+2. **同一イベントの二重適用で壊れない**（集計系は `lastEventPosition` で無視、元帳は一意制約で無視）
+3. 引当可能在庫ビュー: `available = onHand − allocated` が全イベント列で保たれる
+4. 引当可能在庫ビュー: `StockFrozen` → `frozen` と `frozenByStocktakeId` が立ち、`StockUnfrozen` で戻る
+5. 引当ビュー: 注文明細IDで既存引当を引ける（H26 の再計画の入力）
+6. 棚卸差異ビュー: `StockCounted` だけの時点で `adjustedAt` が null、`StockAdjusted` で埋まる ★2段
+7. 棚卸差異ビュー: **同じ対象を2回数えると行は1つ**（最新の実地値で上書き。H20）
+8. 在庫元帳ビュー: イベント列と同じ本数・同じ順序で行が並ぶ
+
+---
+
 ## 以降のスライス（未着手）
 
-- ⑤ の残り: ポリシー P1・P2・P3・P4・**P6**（`@EventHandler` → `CommandGateway`）／リードモデルのスキーマ。
+- ⑤ の残り: ポリシー P1・P2・P3・P4・**P6**（`@EventHandler` → `CommandGateway`）の記述。
