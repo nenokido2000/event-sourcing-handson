@@ -5,7 +5,8 @@
       "Bash(docker compose *)",
       "Bash(docker ps*)",
       "Bash(aws dynamodb *)",
-      "Bash(curl -s http://localhost:8080/*)"
+      "Bash(curl -s http://localhost:8080/*)",
+      "Bash(python3 scripts/check-docs.py)"
     ]
   },
   "hooks": {
