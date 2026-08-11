@@ -43,6 +43,9 @@
   - **Axon 4 が Spring Boot 4 に対応したのは 4.13 から**（4.12不可）。4.13は「4→5移行の踏み石」版で Spring Boot 4 統合が主眼 → M5の4→5移行がむしろ楽になる。
   - **Spring Boot 4 は Jackson 3 デフォルト**。Axon の JacksonSerializer は元々 Jackson 2 前提だったため、Serializer 設定（Jackson 3 対応 or 明示指定）に注意。JDK 17+ 要件（Java 25 で充足）。
 - リードモデル(Query側): **PostgreSQL**（ローカル=Docker / AWS=RDS for PostgreSQL）
+  - ※当初はスタックの既定値だったが、M2 で**引当可能在庫ビューのクエリの形**（best-fit 検索＋2属性ソート）から
+    改めて導出し直して確定した。DynamoDB との比較と、FK を置かない理由は
+    [`decisions.md`](decisions.md#h29-リードモデルのストア選定とキー設計)（H29）。
 - イベントストア: 段階導入（M3=組み込み → M4=DynamoDB自作）
 - ローカルAWS: **DynamoDB Local**（`amazon/dynamodb-local`。DynamoDB + DynamoDB Streams）。AWS SDK for Java v2。※LocalStackはライセンス必須化（2026-03、アカウント+auth token必須）につき不採用。DynamoDB Localは無料・アカウント不要で本PoCに必要なDynamoDB+Streamsを満たす。
 - **テスト/開発手法**:

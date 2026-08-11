@@ -919,6 +919,11 @@ boolean closeRequested;               // StocktakeClosed を受けたか
 > ⑤ ポリシースライスの一部。顔ぶれと読み手の正は [`ubiquitous-language.md`](ubiquitous-language.md)、
 > 作り方の決定は [H28](decisions.md#h28-リードモデルの作り方)。
 > クエリ側にビジネスルールを置かない・用途ごとに分ける（[`cqrs-projection.md`](../.claude/rules/cqrs-projection.md)）。
+>
+> **ストアは PostgreSQL 1本**。DynamoDB との比較を経て、下の引当可能在庫ビューのクエリの形から
+> 導出した（[H29](decisions.md#h29-リードモデルのストア選定とキー設計)）。
+> **PK はドメインの識別子をそのまま載せ、ビュー間に FK は張らない**（投入順が保証されない／
+> 参照整合性は読み側の仕事ではない／再構築の順序依存を作らない）。値オブジェクトは素のカラムに落ちる。
 
 ### 冪等性の担保（全ビュー共通の約束）
 
