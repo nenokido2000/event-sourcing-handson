@@ -22,6 +22,209 @@
 
 ---
 
+## 全体像
+
+**現在形の図**。[`event-storming/`](event-storming/) の図は **M1 時点の記録**で、後から決まったこと
+（P6 の追加・出荷取消・入荷クローズ・リードモデルの顔ぶれ）が載っていないため、ここに現在形を置く。
+BC 単位の関係は [`context-map.md`](context-map.md) が正。
+
+### 俯瞰（集約とポリシーの結線）
+
+まず1画面で構造を掴む図。**イベント名・コマンド名は次の[プロセス全体図](#プロセス全体図m2-現在形)が正**。
+
+```mermaid
+graph LR
+    classDef core fill:#ffcc80,stroke:#b36b00,color:#4a2c00,stroke-width:3px;
+    classDef agg fill:#ffe0b2,stroke:#d08a2c,color:#5a3a0a,stroke-width:2px;
+    classDef ext fill:#e8f5e9,stroke:#4a9a4a,color:#123a12,stroke-dasharray:4 3;
+    classDef saga fill:#f3e5f5,stroke:#8e5aa8,color:#3a1a45,stroke-width:2px;
+
+    ORD["受注が受け付けられた<br/>OrderAccepted（外部）"]:::ext
+    PRC["発注が確定した<br/>（外部・調達）"]:::ext
+
+    RCP["入荷<br/>InboundReceipt"]:::agg
+    SHP["出荷<br/>Shipment"]:::agg
+    STK["棚卸<br/>Stocktake"]:::agg
+    INV["在庫 ★コア<br/>InventoryItem<br/>引当可能 = 手持在庫 − 引当済 ≥ 0"]:::core
+    SAGA["棚卸凍結サーガ P5<br/>StocktakeFreezeSaga<br/>★本PoC唯一の状態あり"]:::saga
+
+    PRC -->|"入荷する"| RCP
+    ORD -->|"P2 引当 ★コア<br/>（引当先を選定して引き当てる）"| INV
+    ORD -->|"出荷を指示する（引当済みの明細）"| SHP
+
+    RCP -->|"P1 格納伝播"| INV
+    SHP -->|"P3 出庫反映"| INV
+    SHP -->|"P6 引当解放<br/>（欠品・取消 × 残明細）"| INV
+    STK -->|"P4 棚卸反映"| INV
+
+    STK -->|"開始 / クローズ"| SAGA
+    SAGA -->|"凍結 / 解凍 × 対象在庫"| INV
+    INV -.->|"凍結・解凍の確認"| SAGA
+```
+
+- **矢印はすべて「イベント → ポリシー → コマンド」**。BC をまたぐ直接依存はなく、1トランザクション1集約を守った
+  結果整合の結線になっている（[H6](decisions.md#h6-受入在庫の集約帰属)）。
+- **在庫（コア）が受け側に集中している**。入口（P1 計上）・出口（P3 払出）・訂正（P4 調整）・
+  予約と解放（P2 / P6）がすべて在庫へ集まる形が、コアサブドメインの位置をそのまま表している。
+- **点線は Saga への確認の戻り**（P5 だけが往復する）。ほかのポリシーは行きっぱなしで状態を持たない。
+- **P2 と P5 はリードモデルを読む**（引当先の選定・対象の列挙）。その配線は[リードモデル](#リードモデル)の図を参照。
+
+### プロセス全体図（M2 現在形）
+
+[`event-storming/02-process.md`](event-storming/02-process.md) と**同じ粒度・同じ付箋の色**で描いた現在形。
+M1 の図との差分は、**P6（引当解放）・出荷取消・入荷クローズ・リードモデルの顔ぶれ・
+`StartStocktake` の前段検証**（M2 で決まったもの）。
+
+```mermaid
+flowchart TB
+    %% 付箋の色 = イベントストーミング標準記法（正は event-storming/00-method.md）
+    classDef evt   fill:#ffb366,stroke:#e07b1a,color:#3d2000;
+    classDef cmd   fill:#7fbfe8,stroke:#2b7cb8,color:#062033;
+    classDef actor fill:#ffe066,stroke:#c9a227,color:#3d3300;
+    classDef pol   fill:#d9c2f0,stroke:#8b5cc4,color:#2e1650;
+    classDef rm    fill:#a8e6a3,stroke:#3f9e3a,color:#0f2f0d;
+    classDef ext   fill:#ffb3d1,stroke:#d1568f,color:#4a0f2b;
+
+    %% ── 外部トリガ（↩）──
+    X_PO["↩ 発注が確定した"]:::ext
+    X_ORD["↩ 受注が受け付けられた<br/>(OrderAccepted)"]:::ext
+    X_SHREQ["↩ 出荷を指示する<br/>(引当済みの明細)"]:::ext
+    X_CANCEL["↩ 注文が取り消された / 期限切れ"]:::ext
+
+    %% ── アクター（👤）──
+    A_RCV["👤 入荷担当"]:::actor
+    A_PUT["👤 格納担当"]:::actor
+    A_PICK["👤 ピッキング担当"]:::actor
+    A_SHIP["👤 出荷担当"]:::actor
+    A_STK["👤 棚卸責任者"]:::actor
+    A_CNT["👤 棚卸担当"]:::actor
+    A_OPS["👤 在庫管理担当<br/>（干渉の二択・H22）"]:::actor
+
+    %% ── リードモデル（📄）──
+    RM_AVAIL["📄 引当可能在庫ビュー<br/>AvailableStockView"]:::rm
+    RM_ALLOC["📄 引当ビュー<br/>AllocationView"]:::rm
+    RM_VAR["📄 棚卸差異ビュー<br/>StocktakeVarianceView"]:::rm
+    RM_INTF["📄 棚卸干渉ビュー<br/>StocktakeInterferenceView<br/>★再構築できない"]:::rm
+
+    %% ── ポリシー（💜）──
+    P1["💜 P1 格納伝播"]:::pol
+    P2["💜 P2 引当 ★コア"]:::pol
+    P3["💜 P3 出庫反映"]:::pol
+    P4["💜 P4 棚卸反映"]:::pol
+    P5["💜 P5 棚卸凍結<br/>Saga（唯一の状態あり）"]:::pol
+    P6["💜 P6 引当解放"]:::pol
+
+    %% ── コマンド（🟦）──
+    C_RCV["入荷する<br/>(ReceiveStock)"]:::cmd
+    C_PUT["格納する<br/>(PutAwayStock)"]:::cmd
+    C_RCLOSE["入荷をクローズする<br/>(CloseInboundReceipt)"]:::cmd
+    C_PLACE["在庫を計上する<br/>(PlaceStock)"]:::cmd
+    C_ALLOC["引き当てる<br/>(AllocateStock)"]:::cmd
+    C_DEALLOC["引当を解除する<br/>(DeallocateStock)"]:::cmd
+    C_ISSUE["在庫を払い出す<br/>(IssueStock・払出累計)"]:::cmd
+    C_ADJ["在庫を調整する<br/>(AdjustStock・実地値)"]:::cmd
+    C_FREEZE["凍結する<br/>(FreezeStock)"]:::cmd
+    C_UNFREEZE["解凍する<br/>(UnfreezeStock)"]:::cmd
+    C_REQ["出荷を指示する<br/>(RequestShipment)"]:::cmd
+    C_PICK["ピッキングする<br/>(PickStock)"]:::cmd
+    C_SHIP["出荷する<br/>(ShipStock・完了区分)"]:::cmd
+    C_CANCEL["出荷を取り消す<br/>(CancelShipment)"]:::cmd
+    C_STK["棚卸を開始する<br/>(StartStocktake)"]:::cmd
+    C_CNT["カウントする<br/>(CountStock)"]:::cmd
+    C_CLOSE["棚卸をクローズする<br/>(CloseStocktake)"]:::cmd
+
+    %% ── 集約（整合性境界）＝サブグラフ ──
+    subgraph AG_RCV["🧺 入荷 InboundReceipt"]
+      E_RCV["在庫が入荷された<br/>(StockReceived)"]:::evt
+      E_PUT["在庫が格納された<br/>(StockPutAway)"]:::evt
+      E_RCLOSE["入荷がクローズされた<br/>(InboundReceiptClosed)<br/>残量＋理由"]:::evt
+    end
+    subgraph AG_INV["📦 在庫 InventoryItem ★コア"]
+      E_PLACE["在庫が計上された<br/>(StockPlaced)<br/>手持在庫↑"]:::evt
+      E_ALLOC["在庫が引き当てられた<br/>(StockAllocated)"]:::evt
+      E_DEALLOC["引当が解除された<br/>(StockDeallocated)"]:::evt
+      E_ISSUE["在庫が払い出された<br/>(StockIssued)<br/>手持在庫↓・引当済↓"]:::evt
+      E_ADJ["在庫が調整された<br/>(StockAdjusted)<br/>差分±・実地値"]:::evt
+      E_FROZEN["在庫が凍結された<br/>(StockFrozen)"]:::evt
+      E_UNFROZEN["在庫が解凍された<br/>(StockUnfrozen)"]:::evt
+    end
+    subgraph AG_SHIP["🚚 出荷 Shipment"]
+      E_REQ["出荷が指示された<br/>(ShipmentRequested)"]:::evt
+      E_PICK["在庫がピッキングされた<br/>(StockPicked)<br/>ピッキング累計"]:::evt
+      E_SHIP["在庫が出荷された<br/>(StockShipped)<br/>出荷明細＋未出荷明細"]:::evt
+      E_CANCEL["出荷が取り消された<br/>(ShipmentCancelled)<br/>取消明細＋理由"]:::evt
+    end
+    subgraph AG_STK["📋 棚卸 Stocktake（差異は持たない）"]
+      E_STKSTART["棚卸が開始された<br/>(StocktakeStarted)"]:::evt
+      E_CNT["実地数量がカウントされた<br/>(StockCounted)"]:::evt
+      E_STKCLOSE["棚卸がクローズされた<br/>(StocktakeClosed)"]:::evt
+    end
+
+    %% ── 入荷〜格納 ──
+    X_PO --> A_RCV --> C_RCV --> E_RCV
+    E_RCV --> A_PUT --> C_PUT --> E_PUT
+    E_PUT -. 残ゼロなら原子的に .-> E_RCLOSE
+    A_PUT -. 破損・欠品で打ち切り .-> C_RCLOSE --> E_RCLOSE
+    E_PUT --> P1 --> C_PLACE --> E_PLACE
+
+    %% ── 引当（自動・コア）──
+    X_ORD --> P2 --> C_ALLOC --> E_ALLOC
+    RM_AVAIL -. 引当先を選定（best-fit） .-> P2
+    RM_ALLOC -. 既存引当から再計画 .-> P2
+
+    %% ── 出荷 ──
+    X_SHREQ --> C_REQ --> E_REQ --> A_PICK
+    A_PICK --> C_PICK --> E_PICK
+    E_PICK --> P3 --> C_ISSUE --> E_ISSUE
+    E_PICK --> A_SHIP --> C_SHIP --> E_SHIP
+    X_CANCEL --> C_CANCEL --> E_CANCEL
+    E_SHIP -. 欠品(SHORTAGE)の残明細 .-> P6
+    E_CANCEL -. 全明細 .-> P6
+    P6 --> C_DEALLOC --> E_DEALLOC
+
+    %% ── 棚卸 ──
+    RM_AVAIL -. 凍結中なら弾く（前段検証） .-> C_STK
+    A_STK --> C_STK --> E_STKSTART
+    E_STKSTART --> P5
+    RM_AVAIL -. 対象在庫を列挙 .-> P5
+    P5 --> C_FREEZE --> E_FROZEN
+    E_FROZEN -. 凍結を確認 .-> P5
+    E_STKSTART --> A_CNT --> C_CNT --> E_CNT
+    RM_VAR -. 差異を見て数え直しを判断 .-> A_CNT
+    E_CNT --> P4 --> C_ADJ --> E_ADJ
+    A_STK --> C_CLOSE --> E_STKCLOSE --> P5
+    P5 --> C_UNFREEZE --> E_UNFROZEN
+    E_UNFROZEN -. 解凍を確認 .-> P5
+
+
+    %% ── 凍結干渉（★イベントではない）──
+    P1 -. コマンド失敗 .-> RM_INTF
+    P3 -. コマンド失敗 .-> RM_INTF
+    P4 -. コマンド失敗 .-> RM_INTF
+    RM_INTF -. 再投入か破棄か .-> A_OPS
+
+    %% ── 集約の枠 ＝「大きい淡黄の付箋」（整合性境界）──
+    style AG_RCV fill:#fff9d6,stroke:#c9ad2e,stroke-width:2px,stroke-dasharray:5 4,color:#3d3300
+    style AG_INV fill:#fff2a8,stroke:#c9ad2e,stroke-width:3px,stroke-dasharray:5 4,color:#3d3300
+    style AG_SHIP fill:#fff9d6,stroke:#c9ad2e,stroke-width:2px,stroke-dasharray:5 4,color:#3d3300
+    style AG_STK fill:#fff9d6,stroke:#c9ad2e,stroke-width:2px,stroke-dasharray:5 4,color:#3d3300
+```
+
+> 読み方（M1 と同じ）: **コマンド（青）の手前には必ず 👤/💜/↩ がある**＝「誰・何が決めたか」が見える。
+> 枠（集約）をまたぐ自動連鎖は💜ポリシー経由（1トランザクション1集約）。
+
+- **見やすさのため2つ省いている**。①**投影の線**（どのイベントがどのビューを更新するか）は
+  [リードモデルの配線図](#配線何が書き誰が読むか)が正。②**在庫元帳ビュー**は工程に関与しない（人が履歴を読むだけ）。
+- **📄 から出る点線＝判断の入力**。ポリシーがリードモデルを読むのは P2（引当先の選定・再計画）と
+  P5（対象在庫の列挙）だけ。`StartStocktake` の前段検証（[H23](decisions.md#h23-棚卸の重複開始)）は
+  **集約の受付ゲートではない**ので、コマンドの手前に点線で入っている。
+- **棚卸干渉ビューだけ入口が💜ポリシー**（イベントではなく**コマンド失敗**を書く。
+  [H22](decisions.md#h22-凍結中に拒否された在庫反映の行き先)）。人が再投入か破棄かを選び、
+  **再投入は元のコマンドを人が改めて発行する**（保留キューを作らない）。
+- **P5 だけイベントが戻ってくる**（凍結・解凍の確認）。ほかのポリシーは行きっぱなしで状態を持たない。
+
+---
+
 ## 共通の値オブジェクト
 
 原始型の乱用を避ける（[`.claude/rules/ddd-ubiquitous-language.md`](../.claude/rules/ddd-ubiquitous-language.md)）。
@@ -102,6 +305,33 @@ InventoryItem
   これにより `IssueStock` を**累計で受け取って冪等にできる**（[H30](decisions.md#h30-ポリシーの二重発火にどう備えるか)）。
   払い出しきった明細（`remaining == 0`）は除去するので、明細が無限に増えることはない。
 - **`frozenBy` を持つ理由**: 解凍要求が「凍結した棚卸と同じか」を照合し、別の棚卸による誤解凍を防ぐため。
+
+### 引当明細1件のライフサイクル
+
+コアの状態そのもの。**引当は必ず閉じる**——消化（払出）か解放（解除）のどちらかで終わる（H17）。
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "引当中" as A
+    state "払出済" as B
+    state "解除済" as C
+
+    [*] --> A : StockAllocated（P2 が引き当てた）
+    A --> A : StockIssued（部分払出）
+    A --> B : StockIssued（払出累計 = 引当量）
+    A --> C : StockDeallocated（P6・取消・期限切れ）
+    B --> [*] : 明細から除去
+    C --> [*] : 明細から除去
+```
+
+- **`引当中 → 引当中` の自己ループが部分払出**（H15）。累計を積むので、同じ払出累計が再送されても
+  ループは回らない＝冪等（[H30](decisions.md#h30-ポリシーの二重発火にどう備えるか)）。
+- **終端で明細を除去する**ので、長寿命の在庫集約でも明細は増え続けない。
+  除去後に届いた払出・解除は「未知の引当ID」として黙って無視される（H17・H30）。
+- 引当済（`allocated`）に効くのは**引当中の明細だけ**（`Σ 未払出残`）。
+  払出済・解除済はもう引当可能を押さえていない。
+- この3状態が `AllocationView.status` の enum とそのまま対応する。
 
 ### 不変条件と、その強制点
 
@@ -1214,6 +1444,59 @@ boolean closeRequested;               // StocktakeClosed を受けたか
 > **PK はドメインの識別子をそのまま載せ、ビュー間に FK は張らない**（投入順が保証されない／
 > 参照整合性は読み側の仕事ではない／再構築の順序依存を作らない）。値オブジェクトは素のカラムに落ちる。
 
+### 配線（何が書き、誰が読むか）
+
+```mermaid
+graph LR
+    classDef ev fill:#ffe0b2,stroke:#d08a2c,color:#5a3a0a;
+    classDef view fill:#e3f2fd,stroke:#3b82c4,color:#0b2e4f;
+    classDef odd fill:#fff3e0,stroke:#d08a2c,color:#5a3a0a,stroke-width:2px,stroke-dasharray:4 3;
+    classDef reader fill:#ede7f6,stroke:#7e57c2,color:#2a1a45;
+
+    EINV["在庫のイベント<br/>StockPlaced / Allocated / Deallocated<br/>Issued / Adjusted / Frozen / Unfrozen"]:::ev
+    ESHP["出荷のイベント<br/>ShipmentRequested"]:::ev
+    ESTK["棚卸のイベント<br/>StockCounted / StocktakeClosed"]:::ev
+    FAIL["ポリシー P1・P3・P4<br/>コマンド失敗（★イベントではない）"]:::odd
+
+    V1["引当可能在庫ビュー<br/>AvailableStockView"]:::view
+    V2["引当ビュー<br/>AllocationView"]:::view
+    V3["在庫元帳ビュー<br/>StockLedgerView"]:::view
+    V4["棚卸差異ビュー<br/>StocktakeVarianceView"]:::view
+    V5["棚卸干渉ビュー<br/>StocktakeInterferenceView<br/>★再構築できない"]:::odd
+
+    R1["P2 引当先の選定<br/>（best-fit・棚卸中は後回し）"]:::reader
+    R2["P5 対象在庫の列挙"]:::reader
+    R3["StartStocktake の前段検証<br/>（重複開始を弾く）"]:::reader
+    R4["人（履歴・棚卸レポート・作業リスト）"]:::reader
+
+    EINV --> V1
+    EINV --> V2
+    EINV --> V3
+    EINV --> V4
+    ESHP --> V2
+    ESTK --> V4
+    ESTK --> V5
+    FAIL -.-> V5
+
+    V1 --> R1
+    V1 --> R2
+    V1 --> R3
+    V2 --> R1
+    V3 --> R4
+    V4 --> R4
+    V5 --> R4
+```
+
+- **読み手がポリシーであるビューと、人であるビューが分かれている**。前者（引当可能在庫・引当）は
+  判断の入力なので**結果整合の遅れが失敗率に直結**し、後者は多少遅れても困らない。
+- **棚卸干渉ビューだけ入口が点線**——書くのはイベントではなく**ポリシーが捕まえたコマンド失敗**
+  （[H22](decisions.md#h22-凍結中に拒否された在庫反映の行き先)）。だから**このビューだけイベントから再構築できない**
+  （[H28](decisions.md#h28-リードモデルの作り方)）。リードモデルというより運用ワークリスト。
+- **`StartStocktake` の前段検証（R3）は集約の受付ゲートではない**。棚卸集約は他の棚卸を知らないので、
+  集約では判定できない（[H23](decisions.md#h23-棚卸の重複開始)）。**集約をまたぐ制約は集約では守れない**実例。
+- 在庫のイベントが4つのビューへ広がるのは、**同じ事実を用途ごとに違う形で持つ**というCQRSの狙いどおりの形
+  （万能ビューを1つ作らない）。
+
 ### 冪等性の担保（全ビュー共通の約束）
 
 | ビューの形 | 担保の仕方 | 対象 |
@@ -1354,10 +1637,10 @@ WHERE locationId IN (?) AND frozen
 
 ## M2 に残っているもの
 
-**スライス①〜⑤はすべて確定した**（集約4つ・ポリシー6本・サーガ1本・リードモデル5種）。残りは横断的な成果物。
+**スライス①〜⑤はすべて確定した**（集約4つ・ポリシー6本・サーガ1本・リードモデル5種）。
+**現在形の図もそろった**（[俯瞰](#俯瞰集約とポリシーの結線)／[プロセス全体図](#プロセス全体図m2-現在形)／
+[引当のライフサイクル](#引当明細1件のライフサイクル)／[リードモデルの配線](#配線何が書き誰が読むか)）。残りは横断的な成果物。
 
-- **現在形の図**（この文書には図が1枚もない）。`event-storming/` の図は **M1 時点の記録**なので
-  後から決まったこと（P6 の追加・P5 の状態・リードモデル5種）が載っていない。
 - **ATDD 受入シナリオ骨子**の洗い出し（[`plan.md`](plan.md) M2 の成果物。実装せず言葉だけ。Spec 化は M3）。
 - **M3+ 改修シナリオの確定**（[`plan.md`](plan.md) が「M2 後に確定」と規定）。
   候補の供給元は [`decisions.md`](decisions.md) 末尾の温存リスト。
