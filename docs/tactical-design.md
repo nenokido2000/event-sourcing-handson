@@ -82,18 +82,24 @@ public record InventoryItemId(Sku sku, LocationId locationId) {
 InventoryItem
   id          : InventoryItemId          // 集約識別子
   onHand      : Quantity                 // 手持在庫（物理的に手元にある数量）
-  allocations : Map<AllocationId, Quantity>   // 引当明細
+  allocations : Map<AllocationId, Line>  // 引当明細
+                Line { allocatedQty : Quantity     // 引当量（引当後は不変）
+                       issuedQty    : Quantity }   // 払出累計
   frozen      : boolean                  // 凍結中（棚卸対象）
   frozenBy    : StocktakeId | null       // どの棚卸で凍結されたか
 
   // 導出値（フィールドに持たない）
-  allocated = allocations.values().sum()
-  available = onHand - allocated         // ★ 負を取りうる（H12）
+  line.remaining = allocatedQty - issuedQty        // その引当の未払出残。★ 常に ≥ 0
+  allocated      = Σ line.remaining
+  available      = onHand - allocated              // ★ 負を取りうる（H12）
 ```
 
 - **引当は明細で持つ**（合計だけではない）。理由: 解除・払出が「どの引当か」を指せないと、
   二重解除・引当量を超える払出・存在しない引当の解除を集約が拒否できないため。
   引当済（`allocated`）は明細の合計＝**導出値**。
+- **明細は残量を減算せず、引当量と払出累計を積み上げる**。入荷の `putAwayQty`・出荷の `pickedQty` と同じ流儀。
+  これにより `IssueStock` を**累計で受け取って冪等にできる**（[H30](decisions.md#h30-ポリシーの二重発火にどう備えるか)）。
+  払い出しきった明細（`remaining == 0`）は除去するので、明細が無限に増えることはない。
 - **`frozenBy` を持つ理由**: 解凍要求が「凍結した棚卸と同じか」を照合し、別の棚卸による誤解凍を防ぐため。
 
 ### 不変条件と、その強制点
@@ -102,7 +108,7 @@ InventoryItem
 |---|---|---|
 | **引当可能 = 手持在庫 − 引当済 ≥ 0** | `AllocateStock` の受付ゲート（`引当可能 ≥ 要求量`） | コアの約束。**棚卸調整のみが例外的に負を持ち込む**（H12） |
 | 手持在庫 ≥ 0 | `IssueStock` の受付ゲート（`手持在庫 ≥ 払出量`） | H12 の負状態では引当量の確認だけでは足りない（下記） |
-| 引当明細の各数量 ≥ 0 | `DeallocateStock` / `IssueStock` の受付ゲート | 引当量を超える解除・払出を拒否 |
+| 引当明細の未払出残 ≥ 0 | `IssueStock` の受付ゲート | 引当量を超える払出を拒否 |
 | 凍結中は物理を動かすコマンドを拒否 | `PlaceStock` / `IssueStock` の受付ゲート | 実地値を狂わせないため |
 
 > **なぜ「状態として ≥ 0」ではなく「受付ゲート」なのか（H12）**
@@ -161,7 +167,7 @@ record StockAllocated(InventoryItemId inventoryItemId, AllocationId allocationId
   基準は `DeallocateStock` と同じ——「同じ結果になる要求は黙って受け入れ、矛盾する要求は拒否する」。
   数量違いを拒否すると再処理が起き、引当ビューが追いつくまで繰り返される＝**自己修正する**。
   → [`decisions.md`](decisions.md#h26-引当が途中で失敗したときの立て直し)
-- 状態遷移: `allocations.put(allocationId, quantity)`
+- 状態遷移: `allocations.put(allocationId, Line(allocatedQty = quantity, issuedQty = ZERO))`
 
 #### 3. 引当を解除する（`DeallocateStock`）— 起点: 取消・期限切れ
 
@@ -176,8 +182,9 @@ enum DeallocationReason { ORDER_CANCELLED, EXPIRED, SHORT_SHIPPED }   // 注文�
 |---|---|
 | `DeallocateStock` | 引当IDが未知なら**イベントを発行しない**（冪等）。例外は投げない |
 
-- **全量解除に限る**（部分解除の要求はない。必要になれば M3+ で足す）。イベントには解除された数量を載せる
-  （リードモデルがイベント単独で更新できるように＝プロジェクションが集約の状態を引かない）。
+- **全量解除に限る**（部分解除の要求はない。必要になれば M3+ で足す）。イベントには解除された数量
+  ＝**未払出残**を載せる（一部を払い出した引当を解除すれば、戻るのは残りだけ）。
+  リードモデルがイベント単独で更新できるように載せる＝プロジェクションが集約の状態を引かない。
 - **冪等にする理由（H17）**: 発行元に**ポリシー P6（引当解放）**が加わり、再送・リプレイでの重複送信がありうるため。
   凍結・解凍と同じ基準（「同じ結果になる要求は黙って受け入れる」）。「既に解除済み」と「そもそも存在しない」は
   集約から区別できない。→ [`decisions.md`](decisions.md#h17-宙に浮いた引当を誰が解放するか)
@@ -188,22 +195,35 @@ enum DeallocationReason { ORDER_CANCELLED, EXPIRED, SHORT_SHIPPED }   // 注文�
 #### 4. 在庫を払い出す（`IssueStock`）— 起点: ポリシー P3（出庫反映）
 
 ```java
-record IssueStock(InventoryItemId inventoryItemId, AllocationId allocationId, Quantity quantity)
-record StockIssued(InventoryItemId inventoryItemId, AllocationId allocationId, Quantity quantity)
+record IssueStock(InventoryItemId inventoryItemId, AllocationId allocationId, Quantity issuedTotal)
+record StockIssued(InventoryItemId inventoryItemId, AllocationId allocationId,
+                   Quantity quantity, Quantity issuedTotal)   // quantity = 今回適用した差分
 ```
+
+**払出量（`quantity`）は集約が出す差分**であって、コマンドは**払出累計（`issuedTotal`）を絶対値で渡す**。
+`差分 = issuedTotal − 明細の払出累計`。
 
 | 受付ゲート（拒否条件） | 例外 |
 |---|---|
-| 数量がゼロ | `InvalidQuantityException` |
 | 凍結中 | `InventoryFrozenException` |
-| 引当IDが未知 | `UnknownAllocationException` |
-| 払出量 > その引当の残量 | `IssueExceedsAllocationException` |
-| **払出量 > 手持在庫** | **`InsufficientOnHandException`** ← H12 の帰結 |
+| 差分 > その引当の未払出残 | `IssueExceedsAllocationException` |
+| **差分 > 手持在庫** | **`InsufficientOnHandException`** ← H12 の帰結 |
+
+| 冪等の扱い | 挙動 |
+|---|---|
+| 引当IDが未知（払い出しきって明細が消えた／そもそも無い） | **イベントを発行しない**。例外も投げない |
+| 差分がゼロ以下（同じ累計の再送・古い累計の再送） | **イベントを発行しない**。例外も投げない |
 
 - **部分払出を許す**（ピッキングで一部しか取れないことは現実に起きる）。残りは引当のまま。
+- **累計で受け取る理由（H30）**: 発行元の P3（出庫反映）は at-least-once の配信を受けるため、
+  同じ `StockPicked` を2回処理しうる。増分を送ると二重に減るが、累計なら再送は差分ゼロで消える。
+  `AdjustStock` が実地値を絶対値で渡すのと同じ流儀（H10）。
+- **未知の引当IDで例外を投げない理由（H30）**: 「既に払い出し済み」と「そもそも存在しない」は集約から
+  区別できない。`DeallocateStock` が同じ理由で冪等にしてある（H17）のと揃える。
+  → [`decisions.md`](decisions.md#h30-ポリシーの二重発火にどう備えるか)
 - **最後のゲートが要る理由（H12）**: 通常は 引当済 ≤ 手持在庫 なので引当量の確認だけで足りるが、
   棚卸調整で引当可能が負に落ちた状態では 引当済 > 手持在庫 となり、引当量の範囲内でも手持在庫を負にしうる。
-- 状態遷移: `onHand -= quantity`／該当引当を減算（ゼロになったら明細から除去）。
+- 状態遷移: `onHand -= 差分`／`line.issuedQty = issuedTotal`（未払出残がゼロになったら明細から除去）。
   **手持在庫と引当済が同額ずつ減るので引当可能は不変**（H7）。
 
 #### 5. 在庫を調整する（`AdjustStock`）— 起点: ポリシー P4（棚卸反映）
@@ -253,9 +273,8 @@ record StockUnfrozen(InventoryItemId inventoryItemId, StocktakeId stocktakeId)
 |---|---|
 | `InsufficientAvailableStockException` | 引当可能 < 要求量。**コアの不変条件違反** |
 | `InsufficientOnHandException` | 払出量 > 手持在庫（H12 の負状態でのみ到達） |
-| `IssueExceedsAllocationException` | 払出量 > その引当の残量 |
+| `IssueExceedsAllocationException` | 払出の差分 > その引当の未払出残 |
 | `DuplicateAllocationException` | 同じ引当IDで**数量が違う**引当（同じ数量なら冪等に無視。H26） |
-| `UnknownAllocationException` | 未知の引当IDの**払出**（解除は冪等なので投げない。H17） |
 | `InventoryFrozenException` | 凍結中に物理を動かすコマンド（計上・払出） |
 | `AlreadyFrozenException` / `NotFrozenByThisStocktakeException` | 別の棚卸による凍結・解凍・調整（棚の取り合い） |
 | `InvalidQuantityException` | 数量ゼロ等、事実として成立しない数量 |
@@ -269,34 +288,36 @@ M3 で**先に書いて赤にする**（[`.claude/rules/testing.md`](../.claude/
 2. 引当可能の範囲で引き当てられる
 3. 引当を解除すると引当可能が戻る
 4. 払い出すと手持在庫と引当済が同額ずつ減り、**引当可能は変わらない**
-5. 一部だけ払い出すと、残りは引当のまま残る
+5. 一部だけ払い出すと、残りは引当のまま残る（累計を渡すと差分だけが適用される）
 6. 実地値が帳簿値を下回ると、符号付き差分を持つ調整イベントが出て手持在庫が実情に合う
 
 **不変条件（異常系・`expectException` でイベントを発行しないこと）**
 7. 引当可能を超える引当は拒否される ★コア
 8. 同じ引当IDで**数量が違う**引当は拒否される（矛盾する要求。H26）
-9. 未知の引当IDの払出は拒否される
+9. **未知の引当IDの払出はイベントを発行しない**（冪等。H30）
 10. **未知の引当IDの解除はイベントを発行しない**（冪等。H17）
 11. **同じ引当IDで同じ数量の引当はイベントを発行しない**（冪等。H26）
-12. 引当量を超える払出は拒否される
-13. **手持在庫を超える払出は拒否される**（H12 の帰結）
-14. 数量ゼロの計上・引当・払出は拒否される
+12. **同じ払出累計の再送はイベントを発行しない**（冪等。H30）★二重発火対策
+13. **古い払出累計の再送はイベントを発行しない**（差分が負。H30）
+14. 引当量を超える払出は拒否される
+15. **手持在庫を超える払出は拒否される**（H12 の帰結）
+16. 数量ゼロの計上・引当は拒否される
 
 **凍結（P5）**
-15. 凍結中の計上は拒否される
-16. 凍結中の払出は拒否される
-17. **凍結中でも引当は通る**（H11）
-18. 同じ棚卸での二重凍結はイベントを発行しない（冪等）
-19. 別の棚卸が凍結中の在庫への凍結要求は拒否される
-20. 凍結した棚卸と異なる棚卸からの解凍要求は拒否される
-21. 凍結中でない在庫への解凍要求はイベントを発行しない（冪等）
+17. 凍結中の計上は拒否される
+18. 凍結中の払出は拒否される
+19. **凍結中でも引当は通る**（H11）
+20. 同じ棚卸での二重凍結はイベントを発行しない（冪等）
+21. 別の棚卸が凍結中の在庫への凍結要求は拒否される
+22. 凍結した棚卸と異なる棚卸からの解凍要求は拒否される
+23. 凍結中でない在庫への解凍要求はイベントを発行しない（冪等）
 
 **境界・H12**
-22. 差分ゼロの調整はイベントを発行しない
-23. 実地値が帳簿値を上回る調整では、正の差分を持つ調整イベントが出る
-24. **実地値が引当済を下回っても調整は通り、以降の新規引当がすべて拒否される**（H12）
-25. 別の棚卸が凍結中の在庫への調整は拒否される
-26. 凍結されていない在庫への調整は通る（凍結漏れがあっても数えた事実は捨てない）
+24. 差分ゼロの調整はイベントを発行しない
+25. 実地値が帳簿値を上回る調整では、正の差分を持つ調整イベントが出る
+26. **実地値が引当済を下回っても調整は通り、以降の新規引当がすべて拒否される**（H12）
+27. 別の棚卸が凍結中の在庫への調整は拒否される
+28. 凍結されていない在庫への調整は通る（凍結漏れがあっても数えた事実は捨てない）
 
 ---
 
@@ -513,7 +534,7 @@ record ShipmentRequested(ShipmentId shipmentId, List<ShipmentLine> lines)
 ```java
 record PickStock(ShipmentId shipmentId, AllocationId allocationId, Quantity quantity)
 record StockPicked(ShipmentId shipmentId, AllocationId allocationId,
-                   InventoryItemId inventoryItemId, Quantity quantity)
+                   InventoryItemId inventoryItemId, Quantity quantity, Quantity pickedTotal)
 ```
 
 | 受付ゲート（拒否条件） | 例外 |
@@ -531,6 +552,9 @@ record StockPicked(ShipmentId shipmentId, AllocationId allocationId,
   単発伝播のままでいられる（P1 と対称）。
 - イベントに `inventoryItemId` を載せるのは、**P3 が出荷集約を引かずに `IssueStock` を組み立てられる**ようにするため
   （P1 が `StockPutAway` に `sku` を載せたのと同じ理由）。
+- **`pickedTotal`（ピッキング累計）も載せる**。P3 はこれをそのまま `IssueStock` に渡し、在庫集約が差分を出す。
+  イベントが二重配信されても累計は同じ値なので、在庫が二重に減らない
+  （[H30](decisions.md#h30-ポリシーの二重発火にどう備えるか)）。集約が既に持っている値を渡すだけで、新しい状態は要らない。
 - 状態遷移: `line.pickedQty += quantity`
 
 #### 3. 出荷する（`ShipStock`）— 起点: 倉庫作業者（出荷担当）
@@ -995,8 +1019,14 @@ WHERE locationId IN (?) AND frozen
 | `eventType` | enum | 計上 / 引当 / 解除 / 払出 / 調整 / 凍結 / 解凍 |
 | `onHandDelta` / `allocatedDelta` | 符号付き | 動かない側は 0（例: 引当は `onHandDelta = 0`） |
 | `cause` | | `AllocationId` / `StocktakeId` / `ShipmentId` のいずれか |
+| `sourceEventId` | `?` ＋**一意制約** | 起点イベントの識別子。**P1 の二重計上の検出用**（H30） |
 
 - **追記専用**。行を更新しないので `lastEventPosition` を持たない。
+- **`sourceEventId` が要る理由（H30）**: `PlaceStock` だけは冪等にできないので、P1 が二重発火すると
+  `StockPlaced` が**別々のイベントID で2本**出る。`eventId` の一意制約では弾けない。
+  起点の `StockPutAway` の識別子をポリシーが相関IDとして運び、この列の一意制約で**2本目を重複として検出する**。
+  訂正は棚卸調整（`AdjustStock`）＝**次の棚卸で必ず解消する**ので、専用の打ち消し手段は作らない。
+- ポリシー経由でないイベント（人が直接打つ調整など）では null。一意制約は null を重複と見なさない。
 
 ### 棚卸差異ビュー（`StocktakeVarianceView`）
 
@@ -1053,6 +1083,7 @@ WHERE locationId IN (?) AND frozen
 6. 棚卸差異ビュー: `StockCounted` だけの時点で `adjustedAt` が null、`StockAdjusted` で埋まる ★2段
 7. 棚卸差異ビュー: **同じ対象を2回数えると行は1つ**（最新の実地値で上書き。H20）
 8. 在庫元帳ビュー: イベント列と同じ本数・同じ順序で行が並ぶ
+9. 在庫元帳ビュー: **同じ起点イベントから2本目の計上が来ると一意制約で弾かれる**（P1 の二重計上の検出。H30）
 
 ---
 
