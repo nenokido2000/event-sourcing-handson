@@ -62,7 +62,8 @@
   - ※ Cosmic Python の allocation 例に近い、意図的に非自明な集約境界。
 - **CQRS（読み書き分離）**:
   - 書き込み側 = Axon 集約（イベントソース）。
-  - 読み側プロジェクション: `AvailableStockView` / `AllocationView` / `StockLedgerView`（全在庫変動履歴＝履歴のうまみを可視化）。
+  - 読み側プロジェクション: 用途ごとに分ける（万能ビューを作らない）。**顔ぶれの正は
+    [`tactical-design.md`](tactical-design.md) のリードモデル節**（M2 で確定。棚卸の分析で2種増えた）。
 - **プロジェクションの給餌方式（段階）**:
   - M3(組み込みストア期): Axon の TrackingEventProcessor で素直に投影。
   - M4(DynamoDB期): **DynamoDB Streams → ストリーム消費プロセス(DynamoDB Local) → PostgreSQL投影** に切替（AWS本番パターンに一致。Axon の追跡機構はバイパス）。消費は素のAWS SDK v2ポーリングで組む（KCLのStreams AdapterはDynamoDB Local相手だと癖が出る場合があるため）。
@@ -90,7 +91,12 @@ event-sourcing/
 - **M2 — 倉庫の戦術設計（成果物）**: 集約境界・コマンド/イベント/ポリシー・不変条件・ユビキタス言語を `docs/` に整理。**この段でATDDの受入シナリオ骨子（Given-When-Then の言葉）も洗い出す**（実装せず言葉だけ。M3でSpec化）。
   - **進め方＝1集約1スライス**（M1 と同じ刻み方）。M1 で洗い出した4集約＋ポリシー/リードモデルをそのまま①〜⑤とし、コア（在庫）から順に型レベルまで確定させる。
   - **進捗表は [`tactical-design.md`](tactical-design.md) の冒頭**（スライスごとの確定日）。決定は [`decisions.md`](decisions.md) に H番号で記録する。
-- **M3 — 倉庫実装 (Axon 4.x / 組み込みストア)**: 受入→引当→出荷の**動く垂直スライス** + 3プロジェクション + REST API。**TDD＋ATDDの二重ループで実装**する。
+- **M3 — 倉庫実装 (Axon 4.x / 組み込みストア)**: M2 で確定した**4集約すべて**を動かす + リードモデル + REST API。**TDD＋ATDDの二重ループで実装**する。
+  - **刻み方**: (3-a) 受入→引当→出荷の**動く垂直スライス**（P1・P2・P3・P6）→ (3-b) **棚卸**（集約④・P4・サーガ P5・棚卸差異／干渉ビュー）。M2 の①〜⑤と同じく、薄く通してから足す。
+  - **棚卸を M3 に含める理由**（M0 時点のこの行は「受入→引当→出荷」だった）: 棚卸は BC としては当初からあったが、
+    **M2 の分析で最も深い領域になった**（[H18](decisions.md#h18-棚卸は数える対象の母集合を持つか)〜[H23](decisions.md#h23-棚卸の重複開始)・[H27](decisions.md#h27-棚卸凍結サーガの状態と終わり方)）。
+    **本PoC唯一の Saga（P5）と、唯一イベントから再構築できないビュー（棚卸干渉）は棚卸にしか無く**、
+    実装しなければ設計が確かめられないまま残る。
   - 外側(ATDD): まず `specs/` に Gauge の Markdown Spec（受入→引当→出荷、過剰引当の拒否…）を書き、`warehouse-atdd` に Playwright(request) で REST を叩くステップ実装を用意 → 失敗させる（Red）。**ハーネスは薄いハッピーパス1本で立ち上げ**、Spec の作り込みはドメインの形が見えてから増やす（本丸を先に固める）。
   - 内側(TDD): 集約・値オブジェクトを Axon Fixture / JUnit で**テスト先行**（Red→Green→Refactor）。不変条件 `available≥0` の異常系も先に書く。
   - 内側が揃うと外側の受入 Spec が緑に到達 → 垂直スライス完成。この二重ループを以降のMでも踏襲する。
@@ -115,7 +121,8 @@ event-sourcing/
   - **成果物**: `docs/aws-deploy.md`（構成図・手順・コスト注意・`terraform destroy` での撤去手順）。
 
 ## 検証（各段のエンドツーエンド確認）
-- M3: REST で `ReceiveStock`→`AllocateStock`→`ShipStock` → 3プロジェクション照会 → `available=onHand-allocated` が保たれ `StockLedgerView` に全履歴が並ぶ。過剰引当/出荷が不変条件で弾かれる。
+- M3-a: REST で `ReceiveStock`→`AllocateStock`→`ShipStock` → プロジェクション照会 → `available=onHand-allocated` が保たれ `StockLedgerView` に全履歴が並ぶ。過剰引当/出荷が不変条件で弾かれる。
+- M3-b: `StartStocktake`→`CountStock`→`CloseStocktake` → 対象在庫が凍結・解凍され（サーガ P5）、差異ビューに帳簿値と実地値が並ぶ。**凍結中の格納/払出が拒否され、棚卸干渉ビューに行が積まれる**（[H22](decisions.md#h22-凍結中に拒否された在庫反映の行き先)）。
 - M4: `docker compose up` → 同シナリオ → DynamoDB Localに `aggregateIdentifier/sequenceNumber` 行が追記され条件式で連番重複が拒否されること、Streams経由でPostgreSQL投影が更新されることを確認。
 - M5: 移行後、同RESTシナリオが5.x上で同結果になる回帰確認。差分を移行ドキュメントに反映。
 - M6: ウォレットで 付与→利用→失効、残高≥0違反の拒否、失効の時間駆動発火、会計負債ビューの整合を確認。
