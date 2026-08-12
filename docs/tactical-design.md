@@ -13,7 +13,7 @@
 > | ② 入荷（`InboundReceipt`） | **確定**（2026-08-05） |
 > | ③ 出荷（`Shipment`） | **確定**（2026-08-09） |
 > | ④ 棚卸（`Stocktake`） | **確定**（2026-08-09） |
-> | ⑤ ポリシー P1〜P6 / リードモデル | **進行中**（サーガ P5・リードモデル = 確定 2026-08-11 / 残: ポリシー P1〜P4・P6） |
+> | ⑤ ポリシー P1〜P6 / リードモデル | **進行中**（P1・P3・P4・サーガ P5・リードモデル = 確定 2026-08-12 / 残: P2・P6） |
 
 ## 表記の約束
 - 主表現は日本語。英名はコード識別子として併記する（[`event-storming/00-method.md`](event-storming/00-method.md) の表記の約束に従う）。
@@ -431,10 +431,10 @@ enum ClosureReason { COMPLETED, DAMAGED, SHORTAGE }   // 全量格納 / 破損 /
 `StockPutAway` → **P1（格納伝播）** → `PlaceStock(InventoryItemId(sku, locationId), quantity, receiptId)`。
 1トランザクション1集約のため**結果整合**（H6）。
 
-> **未決（⑤ ポリシースライスで決める）**: 格納先の在庫が**凍結中**だと `PlaceStock` は拒否される
-> （`InventoryFrozenException`）。このとき入荷側は格納済みなのに在庫に反映されない**片落ち**が残る。
-> 扱い方（リトライ／デッドレター／そもそも凍結中の棚には置かせない運用）は P1 の設計で決着させる。
-> 関連: [`decisions.md`](decisions.md#h11-棚卸中の引当をどこまで許すか) H11「既知のリスク」。
+> **片落ち（決着済み）**: 格納先の在庫が**凍結中**だと `PlaceStock` は拒否され
+> （`InventoryFrozenException`）、入荷側は格納済みなのに在庫に反映されない**片落ち**が残る。
+> **棚卸干渉ビューに積んで人が再投入／破棄を選ぶ**（[H22](decisions.md#h22-凍結中に拒否された在庫反映の行き先)）。
+> 扱いは[ポリシー P1・P3・P4](#ポリシー-p1p3p4単発伝播) の節を参照。
 
 ### テスト骨子（Axon `AggregateTestFixture` / Given-When-Then）
 
@@ -622,7 +622,7 @@ enum CancellationReason { ORDER_CANCELLED, EXPIRED }   // 注文取消 / 期限�
 ### 在庫集約との接続（ポリシー P3 / P6）
 
 ```
-StockPicked                  → P3（出庫反映）  → IssueStock(inventoryItemId, allocationId, quantity)
+StockPicked                  → P3（出庫反映）  → IssueStock(inventoryItemId, allocationId, pickedTotal)
 StockShipped(未出荷残あり)    → P6（引当解放）  → DeallocateStock(..., SHORT_SHIPPED)   × 残明細
 ShipmentCancelled            → P6（引当解放）  → DeallocateStock(..., 取消理由を写像)   × 全明細
 ```
@@ -632,10 +632,11 @@ ShipmentCancelled            → P6（引当解放）  → DeallocateStock(..., 
 **状態を持たないので Saga ではない**（P5 との違いは fan-out の有無ではなく途中状態の有無）。
 BC 間の語彙の写像（`SHORTAGE` → `SHORT_SHIPPED` 等）も P6 が担う。
 
-> **未決（⑤ ポリシースライスで決める）**: ピッキング先の在庫が**凍結中**だと `IssueStock` は拒否される
-> （`InventoryFrozenException`）。このとき出荷側は棚から取っているのに在庫が減らない**片落ち**が残る。
-> **これは P1（格納伝播）で残した片落ちと完全に同型**（入口と出口で対称に発生する）。扱い方は ⑤ でまとめて決着させる。
-> 関連: [`decisions.md`](decisions.md#h11-棚卸中の引当をどこまで許すか) H11「既知のリスク」。
+> **片落ち（決着済み）**: ピッキング先の在庫が**凍結中**だと `IssueStock` は拒否され
+> （`InventoryFrozenException`）、出荷側は棚から取っているのに在庫が減らない**片落ち**が残る。
+> **P1（格納伝播）の片落ちと完全に同型**（入口と出口で対称に発生する）なので、受け皿も同じ
+> ——棚卸干渉ビュー（[H22](decisions.md#h22-凍結中に拒否された在庫反映の行き先)）。
+> 扱いは[ポリシー P1・P3・P4](#ポリシー-p1p3p4単発伝播) の節を参照。
 
 ### テスト骨子（Axon `AggregateTestFixture` / Given-When-Then）
 
@@ -852,10 +853,104 @@ StocktakeClosed   → P5（棚卸凍結）→ UnfreezeStock(inventoryItemId, sto
 
 ---
 
+## ポリシー P1・P3・P4（単発伝播）
+
+> ⑤ ポリシースライスの一部。**1イベント → 1コマンド**で伝播する3本をまとめて書く。
+> 顔ぶれと責務の正は [`ubiquitous-language.md`](ubiquitous-language.md)。
+> コア（P2 引当）は別節、1:N の P6（引当解放）も別節、状態を持つ P5 は Saga として別節。
+
+### 3本の伝播
+
+| | 受けるイベント（発行元） | 送るコマンド（宛先） | 冪等か |
+|---|---|---|---|
+| **P1** 格納伝播（`PutawayPolicy`） | `StockPutAway`（入荷） | `PlaceStock(InventoryItemId(sku, locationId), quantity, receiptId)`（在庫） | **✕**（H30） |
+| **P3** 出庫反映（`FulfillmentPolicy`） | `StockPicked`（出荷） | `IssueStock(inventoryItemId, allocationId, pickedTotal)`（在庫） | ○（H30） |
+| **P4** 棚卸反映（`StocktakePolicy`） | `StockCounted`（棚卸） | `AdjustStock(inventoryItemId, countedQuantity, stocktakeId)`（在庫） | ○（H10 の絶対値） |
+
+- **どれも他集約・リードモデルを引かない**。組み立てに要る値はイベントに載っている
+  （P1 の `sku`／P3 の `inventoryItemId` と `pickedTotal`）。ポリシーが読みに行くのは P2（引当先の選定）だけ。
+- **P4 はカウントごとの即時伝播**（クローズ時の一括ではない。[H20](decisions.md#h20-カウントを在庫へ伝えるタイミング)）。
+- 3本とも**入口（格納）・出口（払出）・訂正（調整）で同じ形**をしている。集約をまたぐ整合を
+  イベント＋ポリシーで結果整合にする（[H6](decisions.md#h6-受入在庫の集約帰属)）ことの、いちばん素直な現れ。
+
+### 共通の形
+
+```java
+@Component
+@ProcessingGroup("policy")          // ★ プロジェクションとは別グループ（下記）
+class PutawayPolicy {
+    private final CommandGateway commandGateway;
+
+    @EventHandler
+    void on(StockPutAway event) {
+        commandGateway.sendAndWait(new PlaceStock(...));   // ★ 同期で待つ（下記）
+    }
+}
+```
+
+- **状態を持たない**。`@EventHandler` を持つだけの Spring Bean で、イベントごとに独立している
+  （順序不問・どれか1件が失敗しても他に影響しない）。**この点だけが Saga（P5）との違い**。
+- **プロジェクションと processing group を分ける**（[H30](decisions.md#h30-ポリシーの二重発火にどう備えるか)）。
+  リードモデルは使い捨てで再構築できる（[`cqrs-projection.md`](../.claude/rules/cqrs-projection.md)）が、
+  **ポリシーを巻き戻すと過去のコマンドが全部再発行される**。同じグループに同居させると、
+  リセット操作ひとつで在庫が壊れる。**再構築してよいものと、してはいけないものを構造で分けておく。**
+- **`sendAndWait` で同期に待つ**。非同期で投げっぱなしにすると**コマンドの失敗を捕まえられず**、
+  失敗したイベントが消化されて（トークンが進んで）片落ちに気づけない。
+  下の「失敗の扱い」はすべて、例外がポリシーまで戻ってくることが前提。
+
+### 失敗の扱い
+
+コマンドが失敗する理由は3種類あり、**扱いが違う**。ポリシーが分類の責任を持つ。
+
+| 失敗の種類 | 例 | 扱い |
+|---|---|---|
+| **ドメイン上ありうる拒否** | `InventoryFrozenException`（P1・P3）／`NotFrozenByThisStocktakeException`（P4） | **棚卸干渉ビューに1行書いて、イベントは消化する**。リトライしない（[H22](decisions.md#h22-凍結中に拒否された在庫反映の行き先)） |
+| **一過性の障害** | DB 断・タイムアウト・楽観ロック衝突 | **例外を投げてイベントを消化しない**。プロセッサが再配信する＝リトライ |
+| **恒久的な失敗** | 不正データ・バグに由来する例外 | リトライしても直らない（ポイズンピル）。M3 は**プロセッサが止まる**のに任せて気づく。DLQ は M3+ 候補（[H22](decisions.md#h22-凍結中に拒否された在庫反映の行き先) で温存） |
+
+- **1行目だけがドメインの決定**で、残り2つは技術的な再送の話。混ぜない。
+- 凍結干渉を**リトライしない**理由は H22 の核心にある——「数えるのが先だったか、作業が先だったかは
+  系が持っていない情報」なので、機械が決めてはいけない。**人に見せるところまでがポリシーの仕事**。
+- 干渉ビューへの書き込みは**ポリシーが直接行う**（拒否された事実はイベントストアに無い。H22・H28）。
+  ここだけポリシーが読みモデルへ書くが、**イベントは発行しない**ので CQS は保たれている。
+
+### 二重発火（P1 の既知の穴）
+
+イベントの配信は at-least-once なので、同じイベントを2回処理しうる
+（[H30](decisions.md#h30-ポリシーの二重発火にどう備えるか)）。
+
+- **P3・P4 は受け側が冪等**なので、再送は差分ゼロになって消える。何もしなくてよい。
+- **P1 だけ冪等にできない**（`PlaceStock` は在庫に痕跡を残さないので、集約側に冪等判定の足場がない）。
+  そのため **P1 は起点イベント `StockPutAway` の識別子を相関IDとして運ぶ**。
+  `StockPlaced` まで伝わったそれを在庫元帳ビューが `sourceEventId` として受け、一意制約で**2本目を検出する**。
+- **訂正は棚卸調整**（`AdjustStock`）。二重計上は**次の棚卸で必ず解消する**ので、打ち消しコマンドは作らない。
+- 「隠さず既知の穴として書き、人に見せる」という扱いは片落ち（H22）・終わらない Saga（H27）と同じ。
+
+### テスト骨子（イベント入力 → 送られるコマンド）
+
+ポリシーは**受けたイベントに対して正しいコマンドを組み立てるか**だけを検証する
+（在庫が正しくなるかは集約のテストの仕事）。
+
+**伝播**
+1. `StockPutAway` を受けると、`(sku, locationId)` から組み立てた `PlaceStock` が1件送られる
+2. `StockPicked` を受けると、**ピッキング累計**を載せた `IssueStock` が1件送られる
+3. `StockCounted` を受けると、**実地値**を載せた `AdjustStock` が1件送られる（カウントごとに1件）
+
+**失敗の分類**
+4. 凍結による拒否では、**棚卸干渉ビューに1行増え、例外は伝播しない**（イベントは消化される）
+5. 一過性の障害では、**例外がそのまま伝播する**（イベントを消化しない＝リトライさせる）
+
+**冪等（H30）**
+6. 同じ `StockPicked` を2回処理しても、在庫の手持在庫は1回ぶんしか減らない（累計方式）
+7. 同じ `StockCounted` を2回処理しても、2回目は差分ゼロでイベントが出ない
+8. 同じ `StockPutAway` を2回処理すると**手持在庫は二重に増える**が、
+   在庫元帳ビューが `sourceEventId` の一意制約で**重複を検出する** ★既知の穴
+
+---
+
 ## サーガ P5 棚卸凍結（`StocktakeFreezeSaga`）
 
-> ⑤ ポリシースライスの一部。ポリシー P1〜P4・P6 とリードモデルのスキーマは続けて確定する。
-> **本PoCで状態を持つのはこの P5 だけ**（ほかは状態なしの `...Policy`）。
+> ⑤ ポリシースライスの一部。**本PoCで状態を持つのはこの P5 だけ**（ほかは状態なしの `...Policy`）。
 
 責務は、棚卸の対象ロケーションにある在庫を**開始時に凍結し、クローズ時に元へ戻す**こと。
 Saga である理由（対象の**列挙**・凍結し終わるまでの**途中状態**・**未解凍がどれか**を覚える主体）は
@@ -1089,4 +1184,4 @@ WHERE locationId IN (?) AND frozen
 
 ## 以降のスライス（未着手）
 
-- ⑤ の残り: ポリシー P1・P2・P3・P4・**P6**（`@EventHandler` → `CommandGateway`）の記述。
+- ⑤ の残り: ポリシー **P2（引当・★コア）** と **P6（引当解放）**。
