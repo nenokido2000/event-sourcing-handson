@@ -33,6 +33,8 @@
 
 pre-commit と Stop フックで自動実行される。手動なら `python3 scripts/check-docs.py`。
 
+対象は `docs/` と `specs/`（受入仕様も `decisions.md` を広く参照するため）＋ルートの `README.md` / `CLAUDE.md`。
+
 見るもの（決定的に判定できるものだけ）:
 
 1. `decisions.md` の `## Hn` 見出しと一覧表の行が集合として一致するか（欠番・重複・片側漏れ）

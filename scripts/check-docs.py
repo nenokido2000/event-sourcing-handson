@@ -20,9 +20,11 @@ from collections import Counter
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-# チェック対象。docs/ 配下と、決定を参照するルート文書。
+# チェック対象。docs/ 配下・specs/ 配下（受入仕様も decisions.md を広く参照する）と、
+# 決定を参照するルート文書。
 TARGET_FILES = ["README.md", "CLAUDE.md"]
-TARGET_DIRS = ["docs"]
+TARGET_DIRS = ["docs", "specs"]
+TARGET_EXTS = (".md", ".spec")
 
 DECISIONS = "docs/decisions.md"
 GLOSSARY = "docs/ubiquitous-language.md"
@@ -49,7 +51,7 @@ def collect_markdown():
     for d in TARGET_DIRS:
         for dirpath, _, filenames in os.walk(os.path.join(ROOT, d)):
             for fn in sorted(filenames):
-                if fn.endswith(".md"):
+                if fn.endswith(TARGET_EXTS):
                     paths.append(rel(os.path.join(dirpath, fn)))
     return sorted(set(paths))
 

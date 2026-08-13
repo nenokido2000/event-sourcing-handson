@@ -48,9 +48,13 @@
 
 ## 道4: 実装する（M3〜）
 
-1. [`tactical-design.md`](tactical-design.md) … 集約の状態・受付ゲート・例外・テスト骨子。**実装はこれを仕様として TDD で駆動する**
-2. [`ubiquitous-language.md`](ubiquitous-language.md) … 命名で迷ったらここ（用語の正）
-3. [`../.claude/rules/`](../.claude/rules/) … 遵守ルール（ES / 集約設計 / CQRS / 命名 / テスト）
+1. [`../specs/`](../specs/) … **受入基準（ATDD の外側ループ）**。「何ができていれば完成か」。実装はここを Red にして始める
+2. [`tactical-design.md`](tactical-design.md) … 集約の状態・受付ゲート・例外・テスト骨子。**実装はこれを仕様として TDD で駆動する**
+3. [`ubiquitous-language.md`](ubiquitous-language.md) … 命名で迷ったらここ（用語の正）
+4. [`../.claude/rules/`](../.claude/rules/) … 遵守ルール（ES / 集約設計 / CQRS / 命名 / テスト）
+
+外側（受入 Spec）と内側（Fixture テスト）の**役割分担は
+[H31](decisions.md#h31-受入シナリオの置き場と粒度)** が正。同じ検証を両方に書かない。
 
 判断に詰まったら [`decisions.md`](decisions.md) で「その論点が既に決着済みでないか」を確認してください。
 

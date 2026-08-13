@@ -81,14 +81,14 @@ event-sourcing/
   warehouse-eventstore-dynamodb/ # M4で追加: AbstractEventStorageEngine のDynamoDB実装
   warehouse-app/                 # Spring Boot起動・REST API
   warehouse-atdd/                # M3で追加: Gauge のステップ実装（Java）＋ Playwright(request) ランナー
-  specs/                         # M3で追加: Gauge の Markdown Spec（受入基準＝生きたドキュメント）
+  specs/                         # M2で追加: Gauge の Markdown Spec（受入基準＝生きたドキュメント。H31）
   gradlew, gradle/wrapper/...    # Wrapper同梱
 ```
 
 ## マイルストーン（分析最優先・段階的・各段で成果物を残す）
 - **M0 — 足場**: `git init`、Gradleマルチモジュール雛形、`infra/docker-compose.yml`(DynamoDB Local+Postgres)、README。（→ ここでステアリングのゲートが有効化）
 - **M1 — 倉庫の戦略設計（分析成果物）**: イベントストーミング（Big Picture→Process→Design）を `docs/` にMermaidで記録。BC/コンテキストマップ/コアサブドメイン特定。← **最重視**（`event-storming` スキル活用）
-- **M2 — 倉庫の戦術設計（成果物）**: 集約境界・コマンド/イベント/ポリシー・不変条件・ユビキタス言語を `docs/` に整理。**この段でATDDの受入シナリオ骨子（Given-When-Then の言葉）も洗い出す**（実装せず言葉だけ。M3でSpec化）。
+- **M2 — 倉庫の戦術設計（成果物）**: 集約境界・コマンド/イベント/ポリシー・不変条件・ユビキタス言語を `docs/` に整理。**この段でATDDの受入シナリオも洗い出す**（[H31](decisions.md#h31-受入シナリオの置き場と粒度) で「散文ではなく最初から `specs/` に Gauge Spec の形で書く」に変更。**M2 は文面まで・ステップ実装は M3**）。成果物は [`../specs/`](../specs/)。
   - **進め方＝1集約1スライス**（M1 と同じ刻み方）。M1 で洗い出した4集約＋ポリシー/リードモデルをそのまま①〜⑤とし、コア（在庫）から順に型レベルまで確定させる。
   - **進捗表は [`tactical-design.md`](tactical-design.md) の冒頭**（スライスごとの確定日）。決定は [`decisions.md`](decisions.md) に H番号で記録する。
 - **M3 — 倉庫実装 (Axon 4.x / 組み込みストア)**: M2 で確定した**4集約すべて**を動かす + リードモデル + REST API。**TDD＋ATDDの二重ループで実装**する。
@@ -97,7 +97,7 @@ event-sourcing/
     **M2 の分析で最も深い領域になった**（[H18](decisions.md#h18-棚卸は数える対象の母集合を持つか)〜[H23](decisions.md#h23-棚卸の重複開始)・[H27](decisions.md#h27-棚卸凍結サーガの状態と終わり方)）。
     **本PoC唯一の Saga（P5）と、唯一イベントから再構築できないビュー（棚卸干渉）は棚卸にしか無く**、
     実装しなければ設計が確かめられないまま残る。
-  - 外側(ATDD): まず `specs/` に Gauge の Markdown Spec（受入→引当→出荷、過剰引当の拒否…）を書き、`warehouse-atdd` に Playwright(request) で REST を叩くステップ実装を用意 → 失敗させる（Red）。**ハーネスは薄いハッピーパス1本で立ち上げ**、Spec の作り込みはドメインの形が見えてから増やす（本丸を先に固める）。
+  - 外側(ATDD): **Spec の文面は M2 で書き終えている**（[`../specs/`](../specs/)）。M3 では `warehouse-atdd` に Playwright(request) で REST を叩くステップ実装を用意して緑にしていく。**まず `harness` タグの1本（各 spec のハッピーパス）でハーネスを立ち上げ**、残りのシナリオはドメインの形が見えてから緑にする（本丸を先に固める）。
   - 内側(TDD): 集約・値オブジェクトを Axon Fixture / JUnit で**テスト先行**（Red→Green→Refactor）。不変条件 `available≥0` の異常系も先に書く。
   - 内側が揃うと外側の受入 Spec が緑に到達 → 垂直スライス完成。この二重ループを以降のMでも踏襲する。
   - ⚑ **この段の前後で「ガード整備 #2（TDD/ATDD遵守ゲート）」を実施**（skill の test-first 既定化・レビュアーのチェックリスト追加・Stop フックのテスト不在チェック）。詳細は「ガード / 品質ゲートの整備」節。
