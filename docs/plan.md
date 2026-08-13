@@ -56,9 +56,13 @@
 ## アーキテクチャ方針（倉庫）
 - **境界づけられたコンテキスト**: 在庫 Inventory（コア）/ 入荷 Receiving / 出荷 Fulfillment / 棚卸 Stocktaking。上流に 受注 Ordering（薄い外部トリガ）。
 - **コアサブドメイン**: 在庫引当（Stock Allocation）。
-- **集約**: `InventoryItem`（SKU × 倉庫ロケーション単位）。不変条件 `available = onHand - allocated ≥ 0`。
-  - コマンド: `ReceiveStock` / `AllocateStock` / `DeallocateStock` / `ShipStock` / `AdjustStock(棚卸)`
-  - イベント: `StockReceived` / `StockAllocated` / `StockDeallocated` / `StockShipped` / `StockAdjusted`
+- **集約・コマンド・イベント**: **正は [`tactical-design.md`](tactical-design.md)**（状態・受付ゲート・例外）と
+  [`ubiquitous-language.md`](ubiquitous-language.md)（用語）。**ここには写さない**
+  （[`.claude/rules/doc-consistency.md`](../.claude/rules/doc-consistency.md) の「同じ情報を2か所に持たない」）。
+  - ※ M0 時点の暫定一覧をここに置いていたが、M2 の確定（`ReceiveStock` は入荷集約・`ShipStock` は出荷集約に属し、
+    在庫が受けるのは `PlaceStock` / `IssueStock`）と食い違ったまま残っていたため撤去した。
+  - コアだけ再掲: 在庫 `InventoryItem`（SKU × ロケーション）の不変条件 **引当可能 = 手持在庫 − 引当済 ≥ 0**。
+    強制点は引当コマンドの受付ゲート（[H12](decisions.md#h12-実地値が引当済を下回る棚卸調整)）。
   - ※ Cosmic Python の allocation 例に近い、意図的に非自明な集約境界。
 - **CQRS（読み書き分離）**:
   - 書き込み側 = Axon 集約（イベントソース）。
