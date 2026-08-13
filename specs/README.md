@@ -24,6 +24,10 @@ Gauge（Markdown Spec）→ ステップ実装（Java）→ Playwright の reque
 Playwright を使うのは request API（ブラウザを起動せず HTTP リクエストだけ投げるモード）が目的で、
 ブラウザ自動化の機能は使わない。
 
+> **観測用 UI（M3-c）は受入 Spec の対象外**（[H34](../docs/decisions.md#h34-観測用-ui-の位置づけ)）。
+> **UI は人が業務の動きを理解するための観測手段**であって、完成の定義ではない。
+> ここに UI 操作のシナリオを混ぜると、受入基準に UI の都合が入り込んで Spec が生きたドキュメントでなくなる。
+
 ## 何をここに書き、何を書かないか
 
 受入 Spec と内側の TDD（[`docs/tactical-design.md`](../docs/tactical-design.md) の各「テスト骨子」）は

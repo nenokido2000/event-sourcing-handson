@@ -17,13 +17,16 @@
 - リードモデル: PostgreSQL / ローカルAWS: DynamoDB Local（amazon/dynamodb-local。DynamoDB + Streams）/ AWS SDK for Java v2
   - ※ LocalStack はライセンス必須化（2026-03）につき不採用。DynamoDB Local は無料・アカウント不要で DynamoDB + Streams に対応。
 
-## モジュール構成
-- `warehouse-domain` … 集約・コマンド・イベント（純ドメイン）
-- `warehouse-command` … コマンドハンドラ・Axon設定
-- `warehouse-query` … プロジェクション・リードモデル・クエリハンドラ
+## モジュール構成（責務の正は [`docs/decisions.md`](docs/decisions.md) H33）
+- `warehouse-domain` … 集約（`@CommandHandler` 込み）・コマンド・イベント・値オブジェクト。**Axon には依存するが Spring には依存しない**
+- `warehouse-command` … ポリシー P1〜P4・P6 / サーガ P5。**リードモデルは `QueryGateway` で読む**（query へコンパイル依存しない）
+- `warehouse-query` … プロジェクション・リードモデル（JPA）・クエリハンドラ。**ドメインの値オブジェクトを JPA エンティティに持ち込まない**
 - `warehouse-eventstore-dynamodb` … 自作 `AbstractEventStorageEngine`（M4で追加）
-- `warehouse-app` … Spring Boot起動・REST API
-- `infra` … docker-compose（DynamoDB Local, PostgreSQL）/ `docs` … 分析・設計成果物
+- `warehouse-app` … Spring Boot起動・REST API・Axon設定・前段バリデーション（＋M3-cで観測UI）
+- `specs` … 受入仕様（Gauge Markdown Spec）/ `infra` … docker-compose（DynamoDB Local, PostgreSQL）/ `docs` … 分析・設計成果物
+
+**実装順序**: 値オブジェクト → イベント → コマンド → 集約 → ポリシー → プロジェクション → REST API。
+**コントローラから作らない**（理由は [`docs/plan.md`](docs/plan.md) M3）。
 
 ## ステアリング（この各機構を使うこと）
 - **Rules** `.claude/rules/` … 設計・実装の遵守ルール。コードを書く前後に必ず参照する。

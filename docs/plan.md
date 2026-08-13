@@ -50,7 +50,8 @@
 - ローカルAWS: **DynamoDB Local**（`amazon/dynamodb-local`。DynamoDB + DynamoDB Streams）。AWS SDK for Java v2。※LocalStackはライセンス必須化（2026-03、アカウント+auth token必須）につき不採用。DynamoDB Localは無料・アカウント不要で本PoCに必要なDynamoDB+Streamsを満たす。
 - **テスト/開発手法**:
   - TDD: JUnit 5 ＋ Axon `AggregateTestFixture`（集約）/ 値オブジェクトは素の JUnit。**テストを先に書く**運用。
-  - ATDD: **Gauge**（`gauge-java` プラグイン、仕様は Markdown）＋ **Playwright for Java**（`APIRequestContext` で REST をヘッドレス実行。ブラウザ/UIは用意しない）。Spec は生きたドキュメントとして `specs/` に置く。
+  - ATDD: **Gauge**（`gauge-java` プラグイン、仕様は Markdown）＋ **Playwright for Java**（`APIRequestContext` で REST をヘッドレス実行。**受入 Spec はブラウザを使わない**）。Spec は生きたドキュメントとして `specs/` に置く。
+  - **観測用 UI は別枠で用意する**（M3-c / [H34](decisions.md#h34-観測用-ui-の位置づけ)）。**UI は観測手段であってテスト手段ではない**ので、受入 Spec は API ベースのまま変えない。
 - **本番インフラ / IaC（M8）**: **Terraform**。AWS 構成 = **ECS Fargate**（Spring Boot コンテナ）＋ **ALB** ＋ **RDS for PostgreSQL**（リードモデル）＋ **DynamoDB＋DynamoDB Streams**（実イベントストア）＋ **Lambda**（Streams 消費→RDS 投影）。付随: ECR / VPC・サブネット / IAM / Secrets Manager / CloudWatch Logs。※学習用のため未使用時は `terraform destroy` で撤去する前提。
 
 ## アーキテクチャ方針（倉庫）
@@ -79,11 +80,11 @@ event-sourcing/
   .claude/                       # ステアリング（rules/hooks/skills/agents）
   infra/                         # docker-compose(DynamoDB Local, PostgreSQL), 初期化スクリプト
   infra/terraform/               # M8で追加: AWS本番のIaC（VPC/ECS/ALB/RDS/DynamoDB/Lambda/ECR…をモジュール分割）
-  warehouse-domain/              # 集約・コマンド・イベント（純ドメイン）
-  warehouse-command/             # コマンドハンドラ・Axon設定
-  warehouse-query/               # プロジェクション・リードモデル・クエリハンドラ
+  warehouse-domain/              # 集約(@CommandHandler込み)・コマンド・イベント・値オブジェクト（H33）
+  warehouse-command/             # ポリシー P1〜P4・P6 / サーガ P5（H33）
+  warehouse-query/               # プロジェクション・リードモデル(JPA)・クエリハンドラ
   warehouse-eventstore-dynamodb/ # M4で追加: AbstractEventStorageEngine のDynamoDB実装
-  warehouse-app/                 # Spring Boot起動・REST API
+  warehouse-app/                 # Spring Boot起動・REST API・Axon設定・前段バリデーション（＋M3-cで観測UI）
   warehouse-atdd/                # M3で追加: Gauge のステップ実装（Java）＋ Playwright(request) ランナー
   specs/                         # M2で追加: Gauge の Markdown Spec（受入基準＝生きたドキュメント。H31）
   gradlew, gradle/wrapper/...    # Wrapper同梱
@@ -96,7 +97,14 @@ event-sourcing/
   - **進め方＝1集約1スライス**（M1 と同じ刻み方）。M1 で洗い出した4集約＋ポリシー/リードモデルをそのまま①〜⑤とし、コア（在庫）から順に型レベルまで確定させる。
   - **進捗表は [`tactical-design.md`](tactical-design.md) の冒頭**（スライスごとの確定日）。決定は [`decisions.md`](decisions.md) に H番号で記録する。
 - **M3 — 倉庫実装 (Axon 4.x / 組み込みストア)**: M2 で確定した**4集約すべて**を動かす + リードモデル + REST API。**TDD＋ATDDの二重ループで実装**する。
-  - **刻み方**: (3-a) 受入→引当→出荷の**動く垂直スライス**（P1・P2・P3・P6）→ (3-b) **棚卸**（集約④・P4・サーガ P5・棚卸差異／干渉ビュー）。M2 の①〜⑤と同じく、薄く通してから足す。
+  - **刻み方**: (3-a) 受入→引当→出荷の**動く垂直スライス**（P1・P2・P3・P6）→ (3-c) **観測用UI**（[H34](decisions.md#h34-観測用-ui-の位置づけ)）→ (3-b) **棚卸**（集約④・P4・サーガ P5・棚卸差異／干渉ビュー）。M2 の①〜⑤と同じく、薄く通してから足す。
+  - **アプリケーションアーキテクチャは [H33](decisions.md#h33-アプリケーションアーキテクチャ) が正**（モジュール責務・Axon 結合を許す判断・ポリシーは `QueryGateway` でビューを読む・`@AggregateMember` を使わない・永続化の分離線）。
+  - **実装順序は「イベントから内へ」**。受入 Spec を Red にしてゴールを可視化したうえで、
+    **①値オブジェクト → ②イベント → ③コマンド → ④集約（Fixture）→ ⑤ポリシー → ⑥プロジェクション → ⑦REST API** の順に作る。
+    **コントローラから作らない**。理由: (i) 依存が一方向（コントローラはドメインが決まらないと形が決まらないが逆は成立しない）
+    (ii) `given(過去イベント).when(コマンド).expectEvents(...)` という Fixture の形が、イベントとコマンドが先にあることを前提にしている＝**テスト先行が自動的にこの順序を強制する**
+    (iii) **イベントは書き換えない＝最も変更コストが高い**ので、最初に置いて他をそれに合わせる。
+    全イベントを先に書くのではなく、**受入 Spec 1本が通る最小のイベント／コマンドだけ**を垂直に通す。
   - **棚卸を M3 に含める理由**（M0 時点のこの行は「受入→引当→出荷」だった）: 棚卸は BC としては当初からあったが、
     **M2 の分析で最も深い領域になった**（[H18](decisions.md#h18-棚卸は数える対象の母集合を持つか)〜[H23](decisions.md#h23-棚卸の重複開始)・[H27](decisions.md#h27-棚卸凍結サーガの状態と終わり方)）。
     **本PoC唯一の Saga（P5）と、唯一イベントから再構築できないビュー（棚卸干渉）は棚卸にしか無く**、
@@ -127,6 +135,7 @@ event-sourcing/
 
 ## 検証（各段のエンドツーエンド確認）
 - M3-a: REST で `ReceiveStock`→`AllocateStock`→`ShipStock` → プロジェクション照会 → `available=onHand-allocated` が保たれ `StockLedgerView` に全履歴が並ぶ。過剰引当/出荷が不変条件で弾かれる。
+- M3-c: 観測UI で 3-a の一連の操作をブラウザから行い、**1つのコマンドで複数のビューが同時に変わる**（引当を打つと引当可能在庫・引当・在庫元帳が動く）ことを目で確認する。CQRS の実感はここにしか無い（[H34](decisions.md#h34-観測用-ui-の位置づけ)）。
 - M3-b: `StartStocktake`→`CountStock`→`CloseStocktake` → 対象在庫が凍結・解凍され（サーガ P5）、差異ビューに帳簿値と実地値が並ぶ。**凍結中の格納/払出が拒否され、棚卸干渉ビューに行が積まれる**（[H22](decisions.md#h22-凍結中に拒否された在庫反映の行き先)）。
 - M4: `docker compose up` → 同シナリオ → DynamoDB Localに `aggregateIdentifier/sequenceNumber` 行が追記され条件式で連番重複が拒否されること、Streams経由でPostgreSQL投影が更新されることを確認。
 - M5: 移行後、同RESTシナリオが5.x上で同結果になる回帰確認。差分を移行ドキュメントに反映。
