@@ -53,6 +53,7 @@
 | [H34](#h34-観測用-ui-の位置づけ) | 観測用 UI の位置づけ | 観測手段であってテスト手段ではない・3-a と 3-b の間に置く | 確定 | 2026-08-13 |
 | [H35](#h35-イベントの永続化形式とシリアライザ選定) | イベントの永続化形式とシリアライザ選定 | `general: jackson3` で全系統を JSON に揃える・イベントは record | 確定 | 2026-08-14 |
 | [H36](#h36-組み込みイベントストアの置き場) | 組み込みイベントストアの置き場 | 同一 DB をスキーマで分ける（`eventstore` / `readmodel`） | 確定 | 2026-08-14 |
+| [H37](#h37-受入テストハーネスの版と-gradle-組み込み方) | 受入テストハーネスの版と Gradle 組み込み方 | `org.gauge` プラグインで `warehouse-atdd` から回す・アプリは手動起動 | 確定 | 2026-08-14 |
 
 **保留・暫定の扱い**: H5 は M3+ の改修シナリオ候補として温存（分析には現れるが M3 の最初のスライスには入れない）。
 H11 は実績データがないための**暫定**であり、見直しの前提が明記されている（下記参照）。
@@ -1959,6 +1960,77 @@ Axon のエンティティはライブラリの `@Entity` なので、こちら�
   M3-a の起動前に `docker compose -f infra/docker-compose.yml down -v` が要る（まだ実データはない）。
 - `axon-server-connector` を依存から除外するかは決めない（プロパティで無効化すれば足りる）。
   [H35](#h35-イベントの永続化形式とシリアライザ選定) の XStream と同じく、**使わない jar が載っている**状態は許容する。
+
+---
+
+## H37 受入テストハーネスの版と Gradle 組み込み方
+
+**状態**: 確定（2026-08-14 / M3 着手前）
+
+### 文脈
+
+受入 Spec は [H31](#h31-受入シナリオの置き場と粒度) で Gauge の Markdown Spec と決まり、**文面は M2 で書き終えている**
+（[`../specs/`](../specs/)）。M3 はそこにステップ実装を足して緑にする段で、[`plan.md`](plan.md) が
+「Gauge/Playwright の具体バージョンと Gradle 組み込み方は M3 着手時に確定」と送っていた論点。
+
+版は Maven Central の**検索インデックスが古い値を返した**（`playwright:1.52.0` / `gauge-java:0.11.3`）ため、
+Gradle に `latest.release` を解決させて実測し直した。プラグインの中身も `javap` で確認している。
+
+| 確認したこと | 結果 |
+|---|---|
+| `com.microsoft.playwright:playwright` | **1.62.0** |
+| `com.thoughtworks.gauge:gauge-java` | **1.0.3** |
+| Gradle プラグイン | **`org.gauge` 3.2.0**（実体 `org.gauge.gradle:gauge-gradle-plugin`） |
+| 旧 id `com.thoughtworks.gauge` | 1.7.2 のマーカーは残るが**実装 jar が解決不能**（`gradle.plugin.com.thoughtworks.gauge.gradle:gauge-gradle-plugin`）→ 使えない |
+| Gauge CLI | Homebrew の `gauge` **1.6.35**（このマシンには未インストール） |
+| プラグインの実装 | extension は `dir` / `env` / `tags` / `specsDir` / `inParallel` / `nodes` / `environmentVariables` / `additionalFlags` / `gaugeRoot`、タスクは `gauge` / `gaugeValidate`。**`gauge` バイナリを起動して `gauge_custom_classpath` を渡す**薄いラッパー |
+
+最後の行が組み込み方を決めた。ステップ実装をコンパイルして依存を揃えるのは Gradle なので、
+**素の `gauge run specs` では `warehouse-atdd` のクラスも Playwright の jar も見えない**。
+クラスパスを組み立てて渡す役が必ず要り、それをプラグインに借りるか自分で書くか、という選択になる。
+
+### 決定
+
+**版を上表で固定し、`org.gauge` プラグインを `warehouse-atdd` に適用して `./gradlew :warehouse-atdd:gauge` で回す。**
+版の正は [`../gradle/libs.versions.toml`](../gradle/libs.versions.toml)（上表は確定時点の記録）。
+
+| 決めたこと | 内容 |
+|---|---|
+| Spec の置き場 | **動かさない**（リポジトリルートの `specs/`）。プラグイン側を `specsDir = "../specs"` で合わせる |
+| Gauge のプロジェクトファイル | `manifest.json` / `env/default/*.properties` は `warehouse-atdd/` に置く（gauge の実行ディレクトリ） |
+| タスクの繋ぎ方 | **`check` / `test` には繋がない**。アプリ起動が要るため、明示的に呼ぶときだけ動く |
+| アプリの起動 | **手動起動が前提**（別端末で `bootRun`）。Spec 側はベース URL を環境変数で受ける（既定 `http://localhost:8080`） |
+| ブラウザ | 使わない（`APIRequestContext` のみ）。ブラウザのダウンロードは抑止する（Java 版は `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`。実際に効くかは1本目で確認する） |
+| CLI | Homebrew で入れる。**別途 `gauge install java`（言語プラグイン）が要る**——ステップ実装用の jar `gauge-java` とは別物 |
+
+### 検討した選択肢と却下理由
+
+- **却下: `Exec` タスクで `gauge run` を直接叩く**（プラグインを入れない）。`sourceSets` から
+  `gauge_custom_classpath` を自分で組んで渡す形。バージョンが1つ減る代わりに、`--tags` / `--env` の
+  引き回しと `gaugeValidate` を自前で書くことになる。プラグインの中身が薄いことは確認済みなので、
+  **不都合が出たらいつでもこちらへ落とせる**——先に借りておく。
+- **却下: 旧 id `com.thoughtworks.gauge` 1.7.2**。実装 jar が解決できず、そもそも動かない。
+- **却下: Gauge をやめて JUnit 5 ＋ Playwright で受入テストを書く**。ハーネスは軽くなるが、
+  [H31](#h31-受入シナリオの置き場と粒度) の「**Spec を生きたドキュメントとして業務の言葉で保つ**」が消える。
+  すでに `specs/` に4本の文面がある以上、二重管理になるだけ。
+- **却下: Gradle からアプリを自動起動する**（`bootRun` のバックグラウンド化 / Testcontainers でアプリごと立てる）。
+  1コマンドで完結する代わりに、起動待ち・ポート衝突・後始末を M3 の最初に抱え込む。
+  加えて**タスクがアプリを落としてしまうと観測できない**——[H34](#h34-観測用-ui-の位置づけ) で
+  「動いているものを見る」ことに価値を置いた以上、立てっぱなしのアプリに Spec を当てるほうが合う。
+- **却下: ATDD を `check` に繋ぐ**。ローカルの Stop フック／pre-commit がアプリ起動込みで重くなる。
+  [`plan.md`](plan.md) の「ATDD は CI 側で回す」方針どおり分けたままにする。
+
+### 帰結
+
+- `warehouse-atdd` を [`../settings.gradle.kts`](../settings.gradle.kts) に追加する（M3-a 着手時）。
+- **開発者の前提ツールに Gauge CLI が増える**。`setup.md` の前提ツール表への追記は、
+  実際に入れる M3-a で行う（`brew install gauge` ＋ `gauge install java`）。
+- **ベース URL を環境変数で受ける形は、M8 の本番 Spec 実行にそのまま乗る**
+  （[`plan.md`](plan.md) の「本番の Gauge Spec（環境変数でエンドポイント差替）」）。
+- 最初に緑にするのは `harness` タグの1本（各 spec のハッピーパス）。残りはドメインの形が見えてから
+  （[`plan.md`](plan.md) M3）。
+- **未確認**: `gauge-java:1.0.3` と CLI 1.6.35 / `gauge install java` が入れる言語プラグインの版整合。
+  ハーネス1本目の実行で確かめる。
 
 ---
 

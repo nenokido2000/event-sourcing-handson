@@ -56,6 +56,8 @@
 - **テスト/開発手法**:
   - TDD: JUnit 5 ＋ Axon `AggregateTestFixture`（集約）/ 値オブジェクトは素の JUnit。**テストを先に書く**運用。
   - ATDD: **Gauge**（`gauge-java` プラグイン、仕様は Markdown）＋ **Playwright for Java**（`APIRequestContext` で REST をヘッドレス実行。**受入 Spec はブラウザを使わない**）。Spec は生きたドキュメントとして `specs/` に置く。
+    - 版と Gradle 組み込み方（`org.gauge` プラグインで `warehouse-atdd` から回す／アプリは手動起動が前提／`check` には繋がない）は
+      [`decisions.md`](decisions.md#h37-受入テストハーネスの版と-gradle-組み込み方)（H37）。版の正は [`../gradle/libs.versions.toml`](../gradle/libs.versions.toml)。
   - **観測用 UI は別枠で用意する**（M3-c / [H34](decisions.md#h34-観測用-ui-の位置づけ)）。**UI は観測手段であってテスト手段ではない**ので、受入 Spec は API ベースのまま変えない。
 - **本番インフラ / IaC（M8）**: **Terraform**。AWS 構成 = **ECS Fargate**（Spring Boot コンテナ）＋ **ALB** ＋ **RDS for PostgreSQL**（リードモデル）＋ **DynamoDB＋DynamoDB Streams**（実イベントストア）＋ **Lambda**（Streams 消費→RDS 投影）。付随: ECR / VPC・サブネット / IAM / Secrets Manager / CloudWatch Logs。※学習用のため未使用時は `terraform destroy` で撤去する前提。
 
@@ -175,4 +177,4 @@ event-sourcing/
 - PHPフレームワークの具体選定（M7）。
 - M4のStreams消費の実装形態、5.x移行時の追跡トークン/グローバル順序の作り込み範囲（実ドキュメント確認のうえM4/M5で確定）。
 - M8 の細部: tfstate を local のままにするか S3＋ロックへ上げるか / RDS を単一AZ最小構成にするか（コスト最優先） / ALB を公開するか制限するか（学習用なので最小権限・最小公開で）。着手時に確定。
-- Gauge/Playwright(Java) の具体バージョンと Gradle 組み込み方（`warehouse-atdd` を通常の test タスクと分けるか、専用タスクにするか）。M3着手時に確定。
+- ~~Gauge/Playwright(Java) の具体バージョンと Gradle 組み込み方~~ → **[H37](decisions.md#h37-受入テストハーネスの版と-gradle-組み込み方) で確定**（2026-08-14）。
