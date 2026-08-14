@@ -52,6 +52,7 @@
 | [H33](#h33-アプリケーションアーキテクチャ) | アプリケーションアーキテクチャ | 集約はドメインに置き Axon 結合を許す・永続化だけを厳格に分ける | 確定 | 2026-08-13 |
 | [H34](#h34-観測用-ui-の位置づけ) | 観測用 UI の位置づけ | 観測手段であってテスト手段ではない・3-a と 3-b の間に置く | 確定 | 2026-08-13 |
 | [H35](#h35-イベントの永続化形式とシリアライザ選定) | イベントの永続化形式とシリアライザ選定 | `general: jackson3` で全系統を JSON に揃える・イベントは record | 確定 | 2026-08-14 |
+| [H36](#h36-組み込みイベントストアの置き場) | 組み込みイベントストアの置き場 | 同一 DB をスキーマで分ける（`eventstore` / `readmodel`） | 確定 | 2026-08-14 |
 
 **保留・暫定の扱い**: H5 は M3+ の改修シナリオ候補として温存（分析には現れるが M3 の最初のスライスには入れない）。
 H11 は実績データがないための**暫定**であり、見直しの前提が明記されている（下記参照）。
@@ -1873,6 +1874,91 @@ axon:
 - 後続に送る論点: **DynamoDB の項目にどう置くか**（JSON 文字列を1属性に入れるか、Map 属性に展開するか）は
   自作 `EventStorageEngine` の設計なので M4。**Axon 5 のシリアライザ事情**は M5 で確認する。
 - [`plan.md`](plan.md) の「Serializer 設定に注意」はこの決定へのリンクに置き換える。
+
+---
+
+## H36 組み込みイベントストアの置き場
+
+**状態**: 確定（2026-08-14 / M3 着手前）
+
+### 文脈
+
+イベントストアは段階導入で、**M3 は組み込み・M4 で DynamoDB 自作**（[`plan.md`](plan.md)）。
+つまり M3 の間だけ、書き側（イベント）と読み側（[H29](#h29-リードモデルのストア選定とキー設計) で PostgreSQL に決めた
+5ビュー）が**同じ PostgreSQL に同居する**。その同居のさせ方を決める必要があった。
+
+前提は Axon 4.13.2 のオートコンフィグを `javap` で読んで確認した（[H35](#h35-イベントの永続化形式とシリアライザ選定) と同じ、
+一次ドキュメントではなく jar の実測）。
+
+| 確認したこと | 結果 |
+|---|---|
+| `JpaEventStoreAutoConfiguration` の条件 | `@ConditionalOnBean(EntityManagerFactory)` かつ `@ConditionalOnMissingBean({EventStorageEngine, EventBus, EventStore})` |
+| その `@AutoConfigureAfter` | `AxonServerBusAutoConfiguration` / `HibernateJpaAutoConfiguration` |
+| `axon-server-connector` | **starter 経由でクラスパスに載る**（`runtimeClasspath` で確認）→ 無効化しないと Axon Server 側が `EventStore` を出し、**JPA 版は条件で降りる** |
+| Axon が登録するエンティティ | `@RegisterDefaultEntities` で `eventstore.jpa`（イベント）＋ `tokenstore` / `saga.repository.jpa` / `deadletter.jpa`（裏方） |
+| その登録先 | **アプリの `EntityManagerFactory`**。いま1つしかない＝リードモデルの DataSource に相乗りする |
+
+最後の行が効く。放っておくと、**書き側のテーブルが読み側 DB に無印で混ざる**。
+
+### 決定
+
+**同じ DB（`warehouse_read`）の中でスキーマを2つに分ける。**
+
+| スキーマ | 中身 | M4 で |
+|---|---|---|
+| `eventstore` | Axon 由来のテーブル全部（イベント・スナップショット・トークン・サーガ・DLQ） | イベントは DynamoDB へ抜ける |
+| `readmodel` | [H28](#h28-リードモデルの作り方) の5ビュー | そのまま残る |
+
+```yaml
+axon:
+  axonserver:
+    enabled: false          # Axon Server は使わない（CLAUDE.md の方針）。これが無いと JPA 版が効かない
+spring:
+  jpa:
+    properties:
+      hibernate:
+        default_schema: eventstore
+```
+
+**既定側を書き側（`eventstore`）に寄せ、リードモデルのエンティティだけ `@Table(schema = "readmodel")` で上書きする。**
+Axon のエンティティはライブラリの `@Entity` なので、こちらからスキーマを指定できない。指定できるほうに明示を寄せる。
+
+スキーマ自体は `infra/` の初期化 SQL で決定的に作り、テーブルは `ddl-auto: update` のまま Hibernate に作らせる。
+テーブル名は Spring Boot 既定の命名戦略でスネークケースになる（`domain_event_entry` など。実物は M3-a の起動時に確認する）。
+
+### 検討した選択肢と却下理由
+
+- **却下: 同一スキーマ（`public` に全部置く）**。設定は `axon.axonserver.enabled: false` の1行で済む。
+  M3 の組み込みストアは M4 で捨てる足場なので割り切る、という筋は通る。
+  ただし `psql` で覗いたときに書き側と読み側が混ざり、**M4 で「イベントストアを剥がす」ときにどのテーブルが
+  Axon 由来かを目で選り分ける**ことになる。差が設定2行なら、分けないほうの理由が弱い。
+- **却下: 別 DB（`warehouse_events`）＋2データソース**。本番構成（DynamoDB / RDS）に最も忠実。
+  だが `DataSource` / `EntityManagerFactory` / `TransactionManager` / `EntityManagerProvider` を2組み用意し、
+  `@Primary` の綱引きを解き、**`@RegisterDefaultEntities` が primary な EMF に効く**のを避けるために
+  persistence unit を自前で組む必要がある。これは **M4 で丸ごと捨てる配管**で、
+  [`plan.md`](plan.md) の優先順位ガード（ツール整備が本丸の学習を圧迫するなら本丸を優先）に照らして採らない。
+  なお「書き側と読み側でトランザクションが分かれる」ことは、投影が
+  `TrackingEventProcessor` で別トランザクションで走ることによって、同一 DataSource でも保たれる。
+- **却下: `JdbcEventStorageEngine` を明示設定する**。JPA 版と同じ形のテーブルへ素の SQL で書く実装。
+  M4 で自作するのは `AbstractEventStorageEngine` なので、M3 で JDBC 版に替えても得る学びが増えない。
+- **却下: インメモリ（`InMemoryEventStorageEngine`）**。起動のたびに履歴が消える。
+  [H32](#h32-m3-改修シナリオの選定) の改修シナリオは「**古いイベントをアップキャスタで読む**」ことが主眼なので、
+  履歴が残らないと成立しない。同じ理由で M3-c の観測 UI も見るものが無くなる。
+
+### 帰結
+
+- **トークン・サーガ・DLQ も `eventstore` スキーマに入る**。これらはリードモデルではなく Axon の運用テーブル＝
+  書き側の裏方という整理。サーガは [P5](#h27-棚卸凍結サーガの状態と終わり方) の状態そのもので、
+  シリアライズ形式は [H35](#h35-イベントの永続化形式とシリアライザ選定) の `general` が効く。
+- **M4 の切替が「スキーマからイベントのテーブルが消える」という形で見える**。トークン／サーガは
+  M4 以降も PostgreSQL に残る可能性がある（Streams 駆動に替える範囲次第）ので、そこで再判断する。
+- **リードモデルの JPA エンティティには `@Table(schema = "readmodel")` を付ける**のが規約になる。
+  [H28](#h28-リードモデルの作り方) のスキーマ表（列とキー）には影響しない。
+- `application.yml` と初期化 SQL に実際に入れるのは **M3-a 着手時**（[H35](#h35-イベントの永続化形式とシリアライザ選定) の
+  `serializer` の1行と同時）。初期化 SQL は**ボリューム初回作成時にしか走らない**ため、
+  M3-a の起動前に `docker compose -f infra/docker-compose.yml down -v` が要る（まだ実データはない）。
+- `axon-server-connector` を依存から除外するかは決めない（プロパティで無効化すれば足りる）。
+  [H35](#h35-イベントの永続化形式とシリアライザ選定) の XStream と同じく、**使わない jar が載っている**状態は許容する。
 
 ---
 

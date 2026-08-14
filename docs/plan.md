@@ -49,6 +49,9 @@
     改めて導出し直して確定した。DynamoDB との比較と、FK を置かない理由は
     [`decisions.md`](decisions.md#h29-リードモデルのストア選定とキー設計)（H29）。
 - イベントストア: 段階導入（M3=組み込み → M4=DynamoDB自作）
+  - M3 の組み込みストアは **Axon の JPA 版**。リードモデルと同じ PostgreSQL に置き、**スキーマで分ける**
+    （`eventstore` / `readmodel`）。`axon.axonserver.enabled: false` が要ることも含め
+    [`decisions.md`](decisions.md#h36-組み込みイベントストアの置き場)（H36）。
 - ローカルAWS: **DynamoDB Local**（`amazon/dynamodb-local`。DynamoDB + DynamoDB Streams）。AWS SDK for Java v2。※LocalStackはライセンス必須化（2026-03、アカウント+auth token必須）につき不採用。DynamoDB Localは無料・アカウント不要で本PoCに必要なDynamoDB+Streamsを満たす。
 - **テスト/開発手法**:
   - TDD: JUnit 5 ＋ Axon `AggregateTestFixture`（集約）/ 値オブジェクトは素の JUnit。**テストを先に書く**運用。
