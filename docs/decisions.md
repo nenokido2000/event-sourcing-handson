@@ -51,6 +51,7 @@
 | [H32](#h32-m3-改修シナリオの選定) | M3+ 改修シナリオの選定 | 品質等級の導入（H13 由来のスキーマ進化） | 確定 | 2026-08-13 |
 | [H33](#h33-アプリケーションアーキテクチャ) | アプリケーションアーキテクチャ | 集約はドメインに置き Axon 結合を許す・永続化だけを厳格に分ける | 確定 | 2026-08-13 |
 | [H34](#h34-観測用-ui-の位置づけ) | 観測用 UI の位置づけ | 観測手段であってテスト手段ではない・3-a と 3-b の間に置く | 確定 | 2026-08-13 |
+| [H35](#h35-イベントの永続化形式とシリアライザ選定) | イベントの永続化形式とシリアライザ選定 | `general: jackson3` で全系統を JSON に揃える・イベントは record | 確定 | 2026-08-14 |
 
 **保留・暫定の扱い**: H5 は M3+ の改修シナリオ候補として温存（分析には現れるが M3 の最初のスライスには入れない）。
 H11 は実績データがないための**暫定**であり、見直しの前提が明記されている（下記参照）。
@@ -1781,6 +1782,97 @@ request API で REST を直接叩く）。テストとしてはそれで足り�
 - **UI 経由の受入 Spec は作らない**が、UI が壊れていないことの確認は必要になる。
   その方法（手動確認で足りるか、スモーク1本を置くか）も M3-c で決める。
 - [`../specs/README.md`](../specs/README.md) に「UI は受入 Spec の対象外」と明記する（後から混ぜられないように）。
+
+---
+
+## H35 イベントの永続化形式とシリアライザ選定
+
+**状態**: 確定（2026-08-14 / M3 着手前）
+
+### 文脈
+
+Axon の `Serializer`（`org.axonframework.serialization.Serializer`）は「オブジェクト ↔ バイト列」の変換に加えて
+**型名とリビジョンの解決**（`typeForClass` / `classForType`）を担うインタフェースで、実装として
+Jackson / XStream / Java 標準シリアライズを差し替えられる。イベントストアの1行は
+`payloadType`（クラス FQCN）・`payloadRevision`（`@Revision` の値）・`payload`（変換後のバイト列）を持ち、
+**アップキャスタはこの `payload` と `revision` の組に対して働く**（[H32](#h32-m3-改修シナリオの選定) の
+「変換できるのはペイロードだけ」はこれを指す）。
+
+この選定は**イベントの形＝二度と書き換えられないもの**に直結するため、M3 の実装に入る前に潰す必要があった。
+前提として次の食い違いがあった（すべて手元の依存解決と jar で確認済み）。
+
+| 確認したこと | 結果 |
+|---|---|
+| Spring Boot 4.1.0 が載せる Jackson | `tools.jackson.core:jackson-databind:3.1.4`（**Jackson 3**） |
+| Jackson 2 の databind | **クラスパスに載らない** → Axon 従来の `JacksonSerializer` は依存追加なしでは動かない |
+| Axon 4.13.2 の同梱実装 | `jackson3.Jackson3Serializer` が**すでに入っている** / `json.JacksonSerializer`(Jackson 2) / `xml.XStreamSerializer` / `avro` / `JavaSerializer` |
+| Axon 4.x の既定 | XStream（`xstream:1.4.21` が `axon-messaging` の**必須依存**として載る） |
+| Spring Boot プロパティ | `axon.serializer.{general,events,messages}` の enum に `JACKSON3` が存在 |
+| `JavaSerializer` | Axon 4.13.2 の時点で `@Deprecated` |
+
+### 決定
+
+**`axon.serializer.general: jackson3` の1行で、3系統すべてを Jackson 3（JSON）に揃える。**
+
+```yaml
+axon:
+  serializer:
+    general: jackson3
+```
+
+3つは並列ではなく `events` → `messages` → `general` のフォールバック連鎖になっており
+（`AxonAutoConfiguration` の Bean 依存がそのまま連鎖を表している）、`general` だけ書けば全部揃う。
+
+| 設定 | 適用先 | このPoCでの具体物 |
+|---|---|---|
+| `events` | イベントストアに永続化されるイベントの payload / metaData | イベント全部 |
+| `messages` | コマンド・クエリのプロセス間転送形式 | **出番なし**（単一プロセス・Axon Server 不使用） |
+| `general` | 上記以外ぜんぶ（スナップショット / トラッキングトークン / **サーガの状態** / デッドライン） | 棚卸凍結サーガ [P5](#h27-棚卸凍結サーガの状態と終わり方) の状態、各プロジェクションのトークン |
+
+**あわせて、イベントは Java の `record` で書く。** Jackson 3 は record の component 名をクラスファイルから
+読めるため、`-parameters` コンパイルオプションなしで復元できることを実測で確認した
+（record ではない通常のクラスは `-parameters` なしだと復元に失敗する）。
+
+### 検討した選択肢と却下理由
+
+- **却下: `xstream`（Axon 4.x の既定のまま）**。リフレクションでフィールドへ直接書き戻す方式のため
+  クラス構造への結合が強く、JDK 25 では内部を覗くための許可設定が要る。
+  M4 で DynamoDB に XML を格納することになり、コンソールで中身を読む学習価値も落ちる。
+- **却下: `java`（Java 標準シリアライズ）**。`payload` に `ObjectOutputStream` のバイト列が入る。
+  保存形式が `serialVersionUID` とフィールド構成に焼き込まれるため「イベントは永久に読み続ける／
+  クラスは進化する」という ES の前提と正面衝突し、決定的なのは**アップキャスタが効かない**こと
+  （アップキャスタは JSON / XML の中間表現を書き換える仕組みで、オブジェクトグラフのバイナリには手が入らない）。
+  [H32](#h32-m3-改修シナリオの選定) の改修シナリオが実施不能になる。Axon 自身も `@Deprecated`。
+- **却下: `avro`**。スキーマでイベント進化を管理する、**本番ならむしろ王道**の選択肢。
+  ただしスキーマ定義とレジストリの世話が増えるうえ、M3+ で体験したい Axon の**アップキャスタ**が
+  Avro のスキーマ解決に置き換わってしまう。学びたい対象がすり替わるので採らない。
+- **却下: `cbor`（バイナリ JSON）**。データモデルは JSON と同じでサイズが小さいだけ。
+  DynamoDB の項目サイズ上限に困る規模ではなく、可読性を捨てる見返りがない。
+- **却下: `events: jackson3` だけ指定（messages / general は既定のまま）**。
+  「永続化される形式だけ慎重に決める」という分離は筋が通るが、**サーガ P5 の状態とトラッキングトークンが
+  XStream で残る**。DB を覗くとイベントは JSON・サーガの行は XML という状態になり、
+  M4 以降も JDK 25 向けの XStream 許可設定を消せない。「XStream が一切登場しない」に振るほうが素直。
+
+### 帰結
+
+- **イベントクラスは `record` に統一する**。コンパイルオプションの追加は不要。
+- **値オブジェクトは既定ではネストした JSON になる**（実測値）:
+  ```json
+  {"inventoryItemId":"A-01","sku":{"value":"SKU-001"},"quantity":{"value":10}}
+  ```
+  これを `@JsonValue` で平坦化（`"sku":"SKU-001"`）するかは**未決**。ドメインに Jackson 依存が入る
+  トレードオフがあるため、最初のイベントを書く M3-a で決める。
+- **`payloadType` にクラス FQCN が入る**＝イベントクラスのパッケージ移動・リネームは後から効かなくなる。
+  [H33](#h33-アプリケーションアーキテクチャ) で決めた `warehouse-domain` 内のパッケージ配置を、
+  1本目のイベントを書く時点で確定させる必要がある。
+- **`axon-messaging` は Jackson を推移的に持ってこない**（持ってくるのは XStream）。
+  `warehouse-app` では Spring Boot 経由で入るが、Spring に依存しない `warehouse-domain` /
+  `warehouse-command` のテストで `Jackson3Serializer` を直接使う場合は依存の明示追加が要る。
+- **XStream の jar は依存として残る**（`axon-messaging` の必須依存）が、使われない。
+  ビルドから除外できるかは M3 実装時に試して判断する（決定事項ではない）。
+- 後続に送る論点: **DynamoDB の項目にどう置くか**（JSON 文字列を1属性に入れるか、Map 属性に展開するか）は
+  自作 `EventStorageEngine` の設計なので M4。**Axon 5 のシリアライザ事情**は M5 で確認する。
+- [`plan.md`](plan.md) の「Serializer 設定に注意」はこの決定へのリンクに置き換える。
 
 ---
 

@@ -41,7 +41,9 @@
 - FW: **Axon Framework 4.x（4.13+ = Spring Boot 4 対応版）** + **Spring Boot 4.1**（axon-spring-boot-starter）
   - Spring Boot 4.1 は2026-06リリースの現行推奨版（公式LTS designation は無い）。3.x系はOSSサポート終了済み（**3.5 が 2026-06-30 EOL**）、OSSアクティブは 4.0（〜2026-12-31）/ 4.1（〜2027-07-31）のみで **4.1 が最長** → 実質4.1一択。
   - **Axon 4 が Spring Boot 4 に対応したのは 4.13 から**（4.12不可）。4.13は「4→5移行の踏み石」版で Spring Boot 4 統合が主眼 → M5の4→5移行がむしろ楽になる。
-  - **Spring Boot 4 は Jackson 3 デフォルト**。Axon の JacksonSerializer は元々 Jackson 2 前提だったため、Serializer 設定（Jackson 3 対応 or 明示指定）に注意。JDK 17+ 要件（Java 25 で充足）。
+  - **Spring Boot 4 は Jackson 3 デフォルト**。Axon 従来の JacksonSerializer は Jackson 2 前提のため設定が要る。
+    → M3 着手前に `axon.serializer.general: jackson3`（Axon 4.13 同梱の Jackson 3 対応版）で確定。
+    イベントは `record` で書く。理由と却下案は [`decisions.md`](decisions.md#h35-イベントの永続化形式とシリアライザ選定)（H35）。JDK 17+ 要件（Java 25 で充足）。
 - リードモデル(Query側): **PostgreSQL**（ローカル=Docker / AWS=RDS for PostgreSQL）
   - ※当初はスタックの既定値だったが、M2 で**引当可能在庫ビューのクエリの形**（best-fit 検索＋2属性ソート）から
     改めて導出し直して確定した。DynamoDB との比較と、FK を置かない理由は
