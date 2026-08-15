@@ -54,6 +54,7 @@
 | [H35](#h35-イベントの永続化形式とシリアライザ選定) | イベントの永続化形式とシリアライザ選定 | `general: jackson3` で全系統を JSON に揃える・イベントは record | 確定 | 2026-08-14 |
 | [H36](#h36-組み込みイベントストアの置き場) | 組み込みイベントストアの置き場 | 同一 DB をスキーマで分ける（`eventstore` / `readmodel`） | 確定 | 2026-08-14 |
 | [H37](#h37-受入テストハーネスの版と-gradle-組み込み方) | 受入テストハーネスの版と Gradle 組み込み方 | `org.gauge` プラグインで `warehouse-atdd` から回す・アプリは手動起動 | 確定 | 2026-08-14 |
+| [H38](#h38-受入ステップが叩く-rest-api-の契約) | 受入ステップが叩く REST API の契約 | CQS を HTTP メソッドで表す・コマンドは「出来事の名詞」へ POST | 確定 | 2026-08-15 |
 
 **保留・暫定の扱い**: H5 は M3+ の改修シナリオ候補として温存（分析には現れるが M3 の最初のスライスには入れない）。
 H11 は実績データがないための**暫定**であり、見直しの前提が明記されている（下記参照）。
@@ -2029,8 +2030,89 @@ Gradle に `latest.release` を解決させて実測し直した。プラグイ�
   （[`plan.md`](plan.md) の「本番の Gauge Spec（環境変数でエンドポイント差替）」）。
 - 最初に緑にするのは `harness` タグの1本（各 spec のハッピーパス）。残りはドメインの形が見えてから
   （[`plan.md`](plan.md) M3）。
+- **ステップ実装は `warehouse-atdd/src/test/java` に置く**（2026-08-15 追記）。プラグイン 3.2.0 の
+  `AbstractGaugeTask` が **`test` ソースセットの `runtimeClasspath`** を `gauge_custom_classpath` として
+  渡す実装だったため。依存も `testImplementation` で入れる。
 - **未確認**: `gauge-java:1.0.3` と CLI 1.6.35 / `gauge install java` が入れる言語プラグインの版整合。
   ハーネス1本目の実行で確かめる。
+
+---
+
+## H38 受入ステップが叩く REST API の契約
+
+**状態**: 確定（2026-08-15 / M3-a 着手時）
+
+### 文脈
+
+[`plan.md`](plan.md) M3 の実装順序は「イベントから内へ」で、**REST API は最後**に作る。
+一方で外側の ATDD は受入 Spec を先に Red にする段取りなので、**ステップ実装だけは実装より先に書く**。
+その時点で「どの URL に何を POST し、何を GET するか」が決まっていないと1行も書けない。
+実装が最後でよいことは変わらず、**契約だけが先に要る**というのがこの論点。
+
+M3-a の対象は [`../specs/`](../specs/) の receiving / allocation / shipping の3本
+（文面は M2 で確定済み / [H31](#h31-受入シナリオの置き場と粒度)）。そこから必要な操作を数えると
+**コマンド8・クエリ3**。
+
+### 決定
+
+**CQS を HTTP メソッドで表す。コマンドは「出来事の名詞」をサブリソースにして POST、
+クエリは業務名のリソースを GET する。**
+
+| Spec のステップ | HTTP | 本文 |
+|---|---|---|
+| 入荷で受け入れる | `POST /api/receipts` | `{receiptId, sku, quantity}` |
+| 棚へ格納する | `POST /api/receipts/{receiptId}/putaways` | `{locationId, quantity}` |
+| 入荷をクローズする | `POST /api/receipts/{receiptId}/closure` | `{reason}` |
+| 受注を受け付ける | `POST /api/external-events/order-accepted` | `{orderId, lines:[{orderLineId, sku, quantity}]}` |
+| 出荷を指示する | `POST /api/shipments` | `{shipmentId, lines:[{allocationId, sku, locationId, quantity}]}` |
+| ピッキングする | `POST /api/shipments/{shipmentId}/picks` | `{allocationId, quantity}` |
+| 出荷する | `POST /api/shipments/{shipmentId}/completion` | `{completion}` |
+| 出荷を取り消す | `POST /api/shipments/{shipmentId}/cancellation` | `{reason}` |
+| 引当可能在庫ビューを見る | `GET /api/available-stock?sku=&location=` | — |
+| 引当ビューを見る | `GET /api/allocations?orderLineId=` / `GET /api/allocations/{allocationId}` | — |
+| 在庫元帳ビューを見る | `GET /api/stock-ledger?sku=&location=` | — |
+
+規則として決めたこと:
+
+| 決めたこと | 内容 |
+|---|---|
+| URL にビューの実装名を出さない | リードモデルは使い捨て可能・再構築可能（[`cqrs-projection.md`](../.claude/rules/cqrs-projection.md)）。URL が指すのは「引当可能在庫」という**業務概念**で、その裏に `AvailableStockView` があるだけ |
+| コマンドは同期 | `CommandGateway#sendAndWait` で処理して 200/201 を返す。結果整合が要るのは投影の反映だけ |
+| エラーは `ProblemDetail`（RFC 9457）＋拡張 `code` | `code` には例外の単純名（`ReceiptAlreadyClosedException` 等）。Spec が例外名を名指ししているため照合先が要る |
+| 外部イベントの投入口を分ける | `/api/external-events/`。**拒否できない**（受付ゲートを持たない）／**M8 でメッセージング受信に差し替わる**、という契約の違いを名前に出す |
+| 出荷指示の明細はステップ実装が組む | `GET /api/allocations?orderLineId=` を引いて本文を作る。[H9](#h9-出荷指示の出所と粒度) の「引当が済んだものが**上流から**指示される」に忠実 |
+| 結果整合の待ちはステップ実装のポーリング | 既定5秒・環境変数で調整。**Spec に待ち時間を書かない**（[H31](#h31-受入シナリオの置き場と粒度)） |
+
+### 検討した選択肢と却下理由
+
+- **却下: クエリ URL に `/views/` を入れる**（`GET /api/views/available-stock`）。CQRS の分離が API から
+  見える利点はあるが、**CQRS の定石ではない**（Axon 公式サンプルも素のリソース名）。
+  ビュー名を公開 URL に固定すると**ビューの統廃合・改名が破壊的変更**になり、用途ごとにビューを分ける
+  方針と噛み合わない。「ビュー」は技術用語なので
+  [`ddd-ubiquitous-language.md`](../.claude/rules/ddd-ubiquitous-language.md) にも触れる。
+- **却下: OpenAPI を手書きして設計先行で進める**。実務では妥当な進め方だが、
+  **設計先行の OpenAPI は日常業務で経験済みで、本 PoC の学習目的に含まれない**（2026-08-15 の判断）。
+  M3-a の面は11本で ADR の表に収まり、手書き YAML を足すと実装との乖離を検出するための契約テストまで
+  要る。[`plan.md`](plan.md) の優先順位ガードに照らして採らない。
+  **生成側（springdoc）は M3-c の観測用 UI に役立つなら入れる**——その時点で Spring Boot 4 対応版の
+  有無を実測する（未確認）。
+- **却下: コマンドを 202 Accepted ＋ ポーリングにする**。非同期を API に出すと、コマンド受理の待ちと
+  投影の結果整合の待ちで**二重に待つ**ことになり、失敗の切り分けが難しくなる。M3-a は観測しやすさを優先。
+- **却下: 受注の投入口を `POST /api/orders` にする**。内部に受注集約があるように見える。
+  受注は外部 BC（[H24](#h24-引当は受注の前か後か)）で、ここは**代役の口**。
+- **却下: 出荷指示を `{shipmentId, orderLineId}` にしてコントローラが引当ビューを読む**。
+  ステップ実装は楽になるが、**上流の仕事をアプリが代行**することになり
+  [H33](#h33-アプリケーションアーキテクチャ) の責務分けがぼやける。
+
+### 帰結
+
+- 実装（⑦REST API）は [`plan.md`](plan.md) の順序どおり最後。この表は**先に固定した契約**で、
+  コントローラは後からこれに合わせる。
+- **観測用 UI（M3-c / [H34](#h34-観測用-ui-の位置づけ)）は業務 API とは別系統に置く**。読む先が
+  リードモデルではなく**イベントストア**で、本番では閉じたくなる性質のため。具体形は M3-c で決める。
+- `ProblemDetail` の `code` に例外名を出すのは内部実装の露出だが、Spec が例外名を仕様として
+  書いている以上、照合先が要る。ドメインのエラーコード体系を別に作るかは、**面が増えたら見直す**。
+- 棚卸（M3-b）のエンドポイントはここでは決めない。同じ規則を当てはめて M3-b 着手時に足す。
 
 ---
 
