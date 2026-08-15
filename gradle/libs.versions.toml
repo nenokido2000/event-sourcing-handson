@@ -1,6 +1,10 @@
 [versions]
 springBoot = "4.1.0"
 axon = "4.13.2"
+# 受入テスト（ATDD）。選定の理由は docs/decisions.md H37
+playwright = "1.62.0"
+gaugeJava = "1.0.3"
+gaugePlugin = "3.2.0"
 
 [libraries]
 # BOM / platform（バージョン集中管理）
@@ -24,5 +28,10 @@ junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 assertj-core = { module = "org.assertj:assertj-core" }
 
+# 受入テスト（版はこのファイルが正 / H37）
+gauge-java = { module = "com.thoughtworks.gauge:gauge-java", version.ref = "gaugeJava" }
+playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright" }
+
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
+gauge = { id = "org.gauge", version.ref = "gaugePlugin" }

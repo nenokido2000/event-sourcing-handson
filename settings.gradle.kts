@@ -6,4 +6,5 @@ include(
     "warehouse-command",
     "warehouse-query",
     "warehouse-app",
+    "warehouse-atdd",
 )

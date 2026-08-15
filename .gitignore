@@ -31,6 +31,11 @@ bin/
 .claude/stop-check.log
 .claude/settings.local.json
 
+# === Gauge（受入テストの実行成果物。Spec とステップ実装は追跡する）===
+warehouse-atdd/reports/
+warehouse-atdd/logs/
+warehouse-atdd/.gauge/
+
 # === LocalStack / infra 実行時データ ===
 .localstack/
 volume/
