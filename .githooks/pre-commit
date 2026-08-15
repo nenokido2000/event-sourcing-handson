@@ -3,7 +3,13 @@
 # pre-commit:
 #   (1) ステージ済み差分に混入した機密（AWSキー/トークン/秘密鍵等）を gitleaks で検出する
 #   (2) docs/ の機械的な不整合（ADR採番・アンカー切れ・用語の波及漏れ）を検出する
+#   (3) 触った対象に応じた動作確認（ビルド / 受入ハーネスの疎通 / compose 構文）
 #   いずれも検出したらコミットを止める。
+#
+# (3) の考え方: 「設定を書いただけで動くつもりになる」のを防ぐ。走らせるものは
+#   **ステージ済みのパスから決める**（触っていない対象のチェックは動かさない）。
+#   機構で守れるのは決定的に判定できるものだけで、「アプリが本当に正しく動くか」は
+#   レビューと実際の確認の仕事（.claude/rules/doc-consistency.md と同じ線引き）。
 # 有効化: リポジトリルートで `git config core.hooksPath .githooks`（初回のみ / clone 後も各自で実行）。
 # 一時回避（原則使わない）: `git commit --no-verify`
 #
@@ -35,5 +41,50 @@ if git diff --cached --name-only --diff-filter=ACM | grep -q '\.md$'; then
     echo "" >&2
     echo "❌ pre-commit: ドキュメントに不整合があります。上記を修正してください。" >&2
     exit 1
+  fi
+fi
+
+STAGED="$(git diff --cached --name-only --diff-filter=ACM)"
+
+# --- ビルド: Java / Gradle 設定を触ったとき ---------------------------------
+if echo "$STAGED" | grep -qE '\.java$|\.gradle\.kts$|^gradle/libs\.versions\.toml$|^gradle\.properties$'; then
+  echo "🔨 pre-commit: ./gradlew build（Java / Gradle 設定を変更したため）"
+  if ! (cd "$ROOT" && ./gradlew build --quiet); then
+    echo "" >&2
+    echo "❌ pre-commit: ビルドが通りません。修正してからコミットしてください。" >&2
+    exit 1
+  fi
+fi
+
+# --- 受入ハーネスの疎通: ATDD / Spec を触ったとき ---------------------------
+# ステップ実装が揃うまで `gauge validate` は必ず非ゼロで終わる（未実装ステップの報告）ため、
+# 終了コードではなく「Gauge が spec を見つけられたか」だけを見る。
+# 実装が揃ったら終了コードそのものを見る形へ格上げする（docs/decisions.md H37）。
+if echo "$STAGED" | grep -qE '^warehouse-atdd/|^specs/'; then
+  if ! command -v gauge >/dev/null 2>&1; then
+    echo "⚠️  pre-commit: gauge が未インストールのため受入ハーネスの疎通確認をスキップしました。" >&2
+  else
+    echo "🧪 pre-commit: 受入ハーネスの疎通確認（warehouse-atdd / specs を変更したため）"
+    OUT="$(cd "$ROOT" && ./gradlew :warehouse-atdd:gaugeValidate 2>&1 || true)"
+    if echo "$OUT" | grep -qE 'does not exist|No specifications found|No such file or directory'; then
+      echo "" >&2
+      echo "$OUT" | grep -E 'does not exist|No specifications found|No such file or directory' >&2
+      echo "❌ pre-commit: Gauge が Spec を見つけられていません（ハーネスの配線が壊れています）。" >&2
+      exit 1
+    fi
+  fi
+fi
+
+# --- compose 構文: infra を触ったとき ---------------------------------------
+if echo "$STAGED" | grep -qE '^infra/.*\.ya?ml$'; then
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "⚠️  pre-commit: docker が無いため compose の構文確認をスキップしました。" >&2
+  else
+    echo "🐳 pre-commit: docker compose config（infra を変更したため）"
+    if ! (cd "$ROOT" && docker compose -f infra/docker-compose.yml config --quiet); then
+      echo "" >&2
+      echo "❌ pre-commit: docker-compose.yml の構文が不正です。" >&2
+      exit 1
+    fi
   fi
 fi
