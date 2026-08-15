@@ -39,11 +39,24 @@ graph TB
 | 在庫（Inventory） → 出荷（Fulfillment） | Customer/Supplier（出荷=下流） | 出荷は👤アクター駆動（ピッキング/出荷）＋ポリシー P3（在庫がピッキングされた→在庫を払い出す）＋ポリシー **P6**（欠品出荷・出荷取消→残った引当を解除する） | 引当を消化して出荷。消化されなかった引当は P6 が在庫へ返す（[H17](decisions.md#h17-宙に浮いた引当を誰が解放するか)）。P6 は BC 間の語彙も写像する（`SHORTAGE` → `SHORT_SHIPPED`） |
 | 棚卸（Stocktaking） → 在庫（Inventory） | Upstream/Downstream | ポリシー P4（実地数量がカウントされた→在庫を調整する）＋ **サーガ P5**（棚卸開始→凍結／クローズ→解凍） | 棚卸は**実情の把握とレポート**に徹し差異を持たない。実地値を渡し、差分は在庫集約が出す（H10）。P5 は複数の在庫集約にまたがる唯一の Saga |
 
+## 共有カーネル（Shared Kernel）
+
+**共通の値オブジェクト**（`Sku` / `Quantity` / `QuantityDelta` / `LocationId` / `OrderLineId`）は、
+BC ごとに重複定義せず**全 BC で共有する1組**として持つ（[H39](decisions.md#h39-warehouse-domain-のパッケージ配置)）。
+実装上は `warehouse-domain` の `shared` パッケージ。顔ぶれの正は
+[`tactical-design.md`](tactical-design.md) の「共通の値オブジェクト」。
+
+- 下の原則「BC をまたぐ直接依存を作らない」の**唯一の例外**にあたるため、ここに明示する。
+  依存の向きは各 BC → 共有カーネルの一方向で、BC どうしが直接つながるわけではない。
+- **集約固有の識別子は共有しない**（`InventoryItemId` / `AllocationId` / `ReceiptId` 等は各 BC が持つ）。
+- 本 PoC が1チーム・1リポジトリで、同じ倉庫の SKU が BC ごとに違う意味を持たないことが前提。
+  前提が崩れたら各 BC が自分の値オブジェクトを持つ形へ戻す。
+
 ## サブドメイン分類（投資配分の指針）
 - **コア**: 在庫（Inventory）＝在庫引当。設計・テスト・レビューの投資を集中。
 - **支援**: 入荷（Receiving）/ 出荷（Fulfillment）/ 棚卸（Stocktaking）。素直に実装。
 - **汎用/外部**: 受注（Ordering）/ 調達（Procurement）。外部トリガとして最小限（内製しない）。
 
 ## 原則（ステアリング準拠）
-- BC をまたぐ直接依存を作らない（[`.claude/rules/ddd-ubiquitous-language.md`](../.claude/rules/ddd-ubiquitous-language.md)）。
+- BC をまたぐ直接依存を作らない（[`.claude/rules/ddd-ubiquitous-language.md`](../.claude/rules/ddd-ubiquitous-language.md)）。例外は上記の共有カーネルのみ。
 - 1トランザクション1集約。またぎは必ずイベント＋ポリシーで結果整合（[`.claude/rules/aggregate-design.md`](../.claude/rules/aggregate-design.md)）。

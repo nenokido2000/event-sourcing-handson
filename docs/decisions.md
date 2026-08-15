@@ -55,6 +55,8 @@
 | [H36](#h36-組み込みイベントストアの置き場) | 組み込みイベントストアの置き場 | 同一 DB をスキーマで分ける（`eventstore` / `readmodel`） | 確定 | 2026-08-14 |
 | [H37](#h37-受入テストハーネスの版と-gradle-組み込み方) | 受入テストハーネスの版と Gradle 組み込み方 | `org.gauge` プラグインで `warehouse-atdd` から回す・アプリは手動起動 | 確定 | 2026-08-14 |
 | [H38](#h38-受入ステップが叩く-rest-api-の契約) | 受入ステップが叩く REST API の契約 | CQS を HTTP メソッドで表す・コマンドは「出来事の名詞」へ POST | 確定 | 2026-08-15 |
+| [H39](#h39-warehouse-domain-のパッケージ配置) | warehouse-domain のパッケージ配置 | BC を第一階層・その中を command / event で分ける・共通VOは共有カーネル | 確定 | 2026-08-15 |
+| [H40](#h40-値オブジェクトの-json-表現) | 値オブジェクトの JSON 表現 | `@JsonValue` で平坦化する（複合IDは文字列表現で1個） | 確定 | 2026-08-15 |
 
 **保留・暫定の扱い**: H5 は M3+ の改修シナリオ候補として温存（分析には現れるが M3 の最初のスライスには入れない）。
 H11 は実績データがないための**暫定**であり、見直しの前提が明記されている（下記参照）。
@@ -2113,6 +2115,120 @@ M3-a の対象は [`../specs/`](../specs/) の receiving / allocation / shipping
 - `ProblemDetail` の `code` に例外名を出すのは内部実装の露出だが、Spec が例外名を仕様として
   書いている以上、照合先が要る。ドメインのエラーコード体系を別に作るかは、**面が増えたら見直す**。
 - 棚卸（M3-b）のエンドポイントはここでは決めない。同じ規則を当てはめて M3-b 着手時に足す。
+
+---
+
+## H39 warehouse-domain のパッケージ配置
+
+**状態**: 確定（2026-08-15 / M3-a 着手時・1本目のイベントを書く前）
+
+### 文脈
+
+[H35](#h35-イベントの永続化形式とシリアライザ選定) の帰結が送った論点。**`payloadType` にクラスの FQCN が
+入る**ため、イベントクラスのパッケージ移動・リネームは後から効かなくなる（アップキャスタが書き換えられるのは
+ペイロードだけ）。[H33](#h33-アプリケーションアーキテクチャ) はモジュール責務までを決めたが、
+`warehouse-domain` の**中**の配置は決めていなかった。**1本目のイベントを書く前に凍結する必要がある。**
+
+### 決定
+
+**BC を第一階層に置き、その中をコマンド／イベントで分ける。共通の値オブジェクトは共有カーネルに置く。**
+
+```
+com.example.warehouse
+├── shared/          Sku, Quantity, QuantityDelta, LocationId, OrderLineId ...  ← 共有カーネル
+├── inventory/       InventoryItem, InventoryItemId, AllocationId  ★コア
+│   ├── command/     PlaceStock, AllocateStock, DeallocateStock, IssueStock ...
+│   └── event/       StockPlaced, StockAllocated, StockDeallocated, StockIssued ...
+├── receiving/       InboundReceipt, ReceiptId  ＋ command/ event/
+├── fulfillment/     Shipment, ShipmentId, ShipmentLine  ＋ command/ event/
+├── stocktaking/     Stocktake, StocktakeId  ＋ command/ event/
+└── ordering/event/  OrderAccepted, OrderLine   ← 外部BCの契約だけ（集約は作らない）
+```
+
+| 決めたこと | 内容 |
+|---|---|
+| 第一階層は BC | [`ddd-ubiquitous-language.md`](../.claude/rules/ddd-ubiquitous-language.md) の「パッケージは BC 単位で切る」 |
+| 第二階層は `command` / `event` | イベントの型を**一覧する場面が3回来る**（M3+ のアップキャスタ / M4 の自作ストア / M5 の移行） |
+| 集約と集約固有の値オブジェクトは BC 直下 | `InventoryItemId` / `AllocationId` / `ReceiptId` 等。その BC の概念であって共有物ではない |
+| 共通の値オブジェクトは `shared` | [`tactical-design.md`](tactical-design.md) の「共通の値オブジェクト」に対応。**共有カーネルを1つ増やす** |
+| 外部 BC はイベント契約だけ | `ordering` に `OrderAccepted` / `OrderLine`。集約もコマンドも作らない |
+
+### 検討した選択肢と却下理由
+
+- **却下: 種別を第一階層にする**（`com.example.warehouse.event.inventory.StockPlaced`）。
+  イベント一覧はさらに見やすいが、**BC 単位で切るルールに正面から反する**。
+  BC をまたぐ結合がパッケージ構造から見えなくなり、[`context-map.md`](context-map.md) と対応しなくなる。
+- **却下: BC 直下フラット**（`command` / `event` を作らない）。ドメインの言葉が1画面に並ぶ利点があり、
+  DDD の教科書的にはこちらが自然。ただし**在庫 BC だけでクラスが15前後**になる。
+  上記の「イベントを一覧する場面が3回」を重く見て採らない。
+- **却下: 共通の値オブジェクトを BC ごとに重複定義する**（共有カーネルを作らない）。
+  厳密には各 BC が自分の `Sku` を持つのが DDD の正道だが、**本 PoC は1チーム・1リポジトリで、
+  同じ倉庫の SKU が BC ごとに違う意味を持つ設計になっていない**（[`tactical-design.md`](tactical-design.md)
+  が最初から「共通の値オブジェクト」として1表にまとめている）。重複は手間だけを増やす。
+- **却下: 値オブジェクトを全部 `shared` に集める**。`InventoryItemId` / `AllocationId` は在庫 BC の概念で、
+  他 BC が組み立てるものではない。集めると共有カーネルが肥大し、BC の境界が読めなくなる。
+
+### 帰結
+
+- **共有カーネル（`shared`）を1つ増やした**ので [`context-map.md`](context-map.md) に反映する
+  （BC 間の関係として明示しないと、原則「BC をまたぐ直接依存を作らない」と矛盾して見える）。
+- **FQCN は事実上ここで凍結**される。M3-b の棚卸も同じ配置に従う。
+- イベントは **public のまま**にする。ポリシー（`warehouse-command`）が別モジュールから購読するため、
+  パッケージプライベートには畳めない。
+- `ordering` に集約を作らないので、外部イベントの入口は [H38](#h38-受入ステップが叩く-rest-api-の契約) の
+  `/api/external-events/` だけになる。
+
+---
+
+## H40 値オブジェクトの JSON 表現
+
+**状態**: 確定（2026-08-15 / M3-a 着手時・1本目のイベントを書く前）
+
+### 文脈
+
+[H35](#h35-イベントの永続化形式とシリアライザ選定) が「最初のイベントを書く M3-a で決める」として送った論点。
+既定では値オブジェクトがネストした JSON になる（実測値）。
+
+```json
+{"sku":{"value":"SKU-001"}, "quantity":{"value":10}}   ← 既定
+{"sku":"SKU-001", "quantity":10}                        ← 平坦化
+```
+
+### 決定
+
+**`@JsonValue` ＋ `@JsonCreator` で平坦化する。複合識別子は文字列表現1個に畳む。**
+
+```java
+public record Sku(String value) {
+    @JsonValue public String value() { return value; }
+    @JsonCreator public static Sku of(String value) { return new Sku(value); }
+}
+```
+
+`InventoryItemId` は `asString()` の形式（`SKU-001@A-01`）で平坦化する。集約識別子として DB に載る文字列と
+**イベント本文の表現が一致**し、ストリームを目で追える。
+
+### 検討した選択肢と却下理由
+
+- **却下: 既定のネストのまま**。ドメインが Jackson を知らずに済む。ただし**保存されたイベント JSON は
+  この PoC で3回「人が読む対象」になる**——M3-c の観測 UI（[H34](#h34-観測用-ui-の位置づけ)）、
+  M4 の DynamoDB 項目、M3+ のアップキャスタ（[H32](#h32-m3-改修シナリオの選定)）。
+  ネストはそのすべてで一皮増える。
+- **却下: ドメインに注釈を入れず、`ObjectMapper` に Module を登録して平坦化する**。純度は保てるが、
+  値オブジェクトごとの変換をアプリ側に書くことになり、**M3-a の主目的でない配管が増える**。
+  [`plan.md`](plan.md) の優先順位ガードに照らして採らない。
+- なお [H33](#h33-アプリケーションアーキテクチャ) で **Axon アノテーションをドメインに入れる**と決めており、
+  それより軽い Jackson 注釈だけを拒む理由はない。ドメインの Spring 非依存は変わらない。
+
+### 帰結
+
+- `warehouse-domain` に **jackson-annotations の依存が入る**（`axon-messaging` は Jackson を推移的に
+  持ってこない / H35）。**Spring には依存しない**方針は維持。
+- **未確認**: Jackson 3 で注釈がどの artifact / パッケージに来るか（`com.fasterxml.jackson.annotation` の
+  ままか）。1本目のイベントを書くときに実測する。
+- `Quantity` / `QuantityDelta` は平坦化すると素の整数になる。**`QuantityDelta` は符号付き**なので
+  負の値が JSON に現れるのが正しい（[H12](#h12-実地値が引当済を下回る棚卸調整)）。
+- M4 の DynamoDB 項目設計は、この平坦化された JSON を前提に検討する。
 
 ---
 
