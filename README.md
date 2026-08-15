@@ -25,7 +25,7 @@ Axon Framework と DynamoDB を題材に、複数ドメイン・複数言語で�
    ES/CQRS 機構の復習＋インフラ理解の定着。将来の他言語（PHP）比較のベースにする。
 
 イベントストアは Axon 公式非対応の **DynamoDB を独自実装で連携**する（具体的な実装方式は別途検討）。
-各題材とも「ドメイン先行 → 自作 DynamoDB エンジン後付け」の順で進め、分析・設計を最難関インフラに人質に取らせない。
+各題材とも「ドメイン先行 → 自作 DynamoDB エンジン後付け」の順で進め、分析・設計の進行が最難関のインフラ実装に左右されないようにする。
 
 ## 技術スタック
 
@@ -43,7 +43,7 @@ Axon Framework と DynamoDB を題材に、複数ドメイン・複数言語で�
 
 ```
 event-sourcing-handson/
-├── CLAUDE.md                       # プロジェクトのステアリングの背骨
+├── CLAUDE.md                       # プロジェクトのステアリングの中核
 ├── docs/                           # plan.md ＋ 分析・設計の成果物（Markdown + Mermaid）
 ├── .claude/                        # ガードレール（Rules / Hooks / Skills / SubAgents）
 ├── infra/                          # docker-compose（DynamoDB Local, PostgreSQL）※M0で追加
