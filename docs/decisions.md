@@ -2063,6 +2063,13 @@ Gradle に `latest.release` を解決させて実測し直した。プラグイ�
   `gauge_custom_classpath`（test の `runtimeClasspath`）と `gauge_specs_dir`（ルートの `specs/`）を環境変数で渡す。
 - タグの絞り込みは `./gradlew :warehouse-atdd:gauge -Ptags=harness`。
 - `libs.versions.toml` からプラグインの版を落とす（`playwright` / `gauge-java` は残る）。
+- **積み残し（実害なし / 対応は後回し）**: Gauge の Java ランナーが起動のたびに
+  `SLF4J: ... StaticLoggerBinder` / `No SLF4J providers were found` と `sun.misc.Unsafe` の警告を出す。
+  前者は **gauge-java 1.0.3 が `slf4j-api` だけを同梱し実装を持たない**ため（`~/.gauge/plugins/java/1.0.3/libs/`
+  に `slf4j-api-1.7.32.jar` のみ）。Gradle 経由では Spring Boot の BOM が `slf4j-api` を 2.0.18 へ
+  引き上げるので文面が変わるが、原因は同じ。後者は protobuf 4.35.1 が JDK 25 で非推奨 API を呼ぶもの。
+  **消すなら `testRuntimeOnly("org.slf4j:slf4j-simple")` を足す**が、今度はランナーの内部ログが出て
+  別のノイズになりうる。**ステップ実装を書き始めて「ランナーのログを見たい」と思った時点で判断する。**
 - **Spec 本体は題材ごとのサブディレクトリに置く**（`specs/warehouse/*.spec`）。Gauge は指定ディレクトリ配下の
   `.spec` / `.md` を**すべて Spec として解析する**ため、案内文書 [`../specs/README.md`](../specs/README.md) が
   `ParseError` になっていた。`gauge_specs_dir` を `specs/warehouse` に向けて解消した。
