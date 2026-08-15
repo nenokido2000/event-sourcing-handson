@@ -1,7 +1,7 @@
 # 倉庫在庫管理 PoC のローカルインフラ。
 #   - DynamoDB Local (amazon/dynamodb-local): DynamoDB + DynamoDB Streams（M4 の自作イベントストア用）
 #     ※ LocalStack はライセンス必須化（2026-03）につき不採用。DynamoDB Local は無料・アカウント不要。
-#   - PostgreSQL: 読みモデル（Query 側プロジェクション）
+#   - PostgreSQL: リードモデル（Query 側プロジェクション）
 # 使い方: docker compose -f infra/docker-compose.yml up -d
 name: warehouse-es
 

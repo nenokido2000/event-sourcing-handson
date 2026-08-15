@@ -2,7 +2,7 @@ plugins {
     `java-library`
 }
 
-// プロジェクション・読みモデル・クエリハンドラ（読み側）。読みモデルは PostgreSQL。
+// プロジェクション・リードモデル・クエリハンドラ（読み側）。リードモデルは PostgreSQL。
 dependencies {
     api(project(":warehouse-domain"))
     implementation(platform(libs.axon.bom))
