@@ -1994,12 +1994,16 @@ Gradle に `latest.release` を解決させて実測し直した。プラグイ�
 
 ### 決定
 
-**版を上表で固定し、`org.gauge` プラグインを `warehouse-atdd` に適用して `./gradlew :warehouse-atdd:gauge` で回す。**
+**版を上表で固定し、~~`org.gauge` プラグインを `warehouse-atdd` に適用して~~ `./gradlew :warehouse-atdd:gauge` で回す。**
 版の正は [`../gradle/libs.versions.toml`](../gradle/libs.versions.toml)（上表は確定時点の記録）。
+
+> **改訂（2026-08-15 / 実際に動かして判明）**: **プラグインは使わず `Exec` タスクで直接叩く**形に変えた。
+> 理由と経緯は下の「[改訂: プラグインから Exec へ](#改訂-プラグインから-exec-へ2026-08-15)」。
+> タスク名（`gauge` / `gaugeValidate`）と上表のその他の決定はそのまま。
 
 | 決めたこと | 内容 |
 |---|---|
-| Spec の置き場 | **動かさない**（リポジトリルートの `specs/`）。プラグイン側を `specsDir = "../specs"` で合わせる |
+| Spec の置き場 | **動かさない**（リポジトリルートの `specs/`）。~~プラグイン側を `specsDir = "../specs"` で合わせる~~ → **環境変数 `gauge_specs_dir` で指す**（下の改訂） |
 | Gauge のプロジェクトファイル | `manifest.json` / `env/default/*.properties` は `warehouse-atdd/` に置く（gauge の実行ディレクトリ） |
 | タスクの繋ぎ方 | **`check` / `test` には繋がない**。アプリ起動が要るため、明示的に呼ぶときだけ動く |
 | アプリの起動 | **手動起動が前提**（別端末で `bootRun`）。Spec 側はベース URL を環境変数で受ける（既定 `http://localhost:8080`） |
@@ -2034,9 +2038,34 @@ Gradle に `latest.release` を解決させて実測し直した。プラグイ�
   （[`plan.md`](plan.md) M3）。
 - **ステップ実装は `warehouse-atdd/src/test/java` に置く**（2026-08-15 追記）。プラグイン 3.2.0 の
   `AbstractGaugeTask` が **`test` ソースセットの `runtimeClasspath`** を `gauge_custom_classpath` として
-  渡す実装だったため。依存も `testImplementation` で入れる。
-- **未確認**: `gauge-java:1.0.3` と CLI 1.6.35 / `gauge install java` が入れる言語プラグインの版整合。
-  ハーネス1本目の実行で確かめる。
+  渡す実装だったため。依存も `testImplementation` で入れる。**Exec へ切り替えた後もこの置き場は維持**する。
+- ~~**未確認**: `gauge-java:1.0.3` と CLI 1.6.35 / `gauge install java` が入れる言語プラグインの版整合~~
+  → **確認済み（2026-08-15）**。CLI 1.6.35 が入れる java プラグインは 1.0.3 で、ステップ実装用の jar と一致。
+  実際に Gauge が起動してクラスパスを受け取り、Spec を解析するところまで通った。
+
+### 改訂: プラグインから Exec へ（2026-08-15）
+
+**ハーネスを実際に動かしたら、`org.gauge` プラグインではルートの `specs/` を指せなかった。**
+
+| 試したこと | 結果 |
+|---|---|
+| `specsDir = "../specs"` | `gauge validate --dir <warehouse-atdd> … ../specs` が渡るが、Gauge が `..` を切り詰めて `warehouse-atdd/specs` を探す |
+| `specsDir` に絶対パス | 同じ。位置引数は**プロジェクト配下に丸められる** |
+| `warehouse-atdd/specs` → `../specs` のシンボリックリンク | `No specifications found`。**ディレクトリのシンボリックリンクを辿らない** |
+| 環境変数 `gauge_specs_dir=../specs`（位置引数なし） | **成功**。ルートの `specs/` を解析した |
+
+プラグインは `specsDir`（既定 `specs`）を**必ず位置引数として渡す**ため、環境変数だけを効かせることができない。
+そこで [H37 の却下案「`Exec` タスクで `gauge run` を直接叩く」](#h37-受入テストハーネスの版と-gradle-組み込み方)
+に落とした。**プラグインの実体は薄いラッパーだと確認済みだったので、乗り換えの代償は小さい**——
+確定時に「不都合が出たらいつでもこちらへ落とせる」と書いておいた通りになった。
+
+- `warehouse-atdd/build.gradle.kts` に `gauge` / `gaugeValidate` を `Exec` で定義する。
+  `gauge_custom_classpath`（test の `runtimeClasspath`）と `gauge_specs_dir`（ルートの `specs/`）を環境変数で渡す。
+- タグの絞り込みは `./gradlew :warehouse-atdd:gauge -Ptags=harness`。
+- `libs.versions.toml` からプラグインの版を落とす（`playwright` / `gauge-java` は残る）。
+- **積み残し**: Gauge が [`../specs/README.md`](../specs/README.md) を Spec として解析して `ParseError` を出す
+  （検証は続行するので致命的ではないが、実行のたびにノイズが出る）。`.spec` をサブディレクトリへ移して
+  `gauge_specs_dir` をそこへ向けるのが有力。**M3-a のステップ実装1本目を書くときに決める。**
 
 ---
 

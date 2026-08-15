@@ -4,7 +4,6 @@ axon = "4.13.2"
 # 受入テスト（ATDD）。選定の理由は docs/decisions.md H37
 playwright = "1.62.0"
 gaugeJava = "1.0.3"
-gaugePlugin = "3.2.0"
 
 [libraries]
 # BOM / platform（バージョン集中管理）
@@ -34,4 +33,3 @@ playwright = { module = "com.microsoft.playwright:playwright", version.ref = "pl
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
-gauge = { id = "org.gauge", version.ref = "gaugePlugin" }

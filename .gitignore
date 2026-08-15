@@ -35,6 +35,7 @@ bin/
 warehouse-atdd/reports/
 warehouse-atdd/logs/
 warehouse-atdd/.gauge/
+warehouse-atdd/gauge_bin/
 
 # === LocalStack / infra 実行時データ ===
 .localstack/
