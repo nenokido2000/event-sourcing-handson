@@ -25,7 +25,10 @@ fun Exec.gaugeCommand(gaugeSubcommand: String) {
     dependsOn(tasks.testClasses)
 
     val stepClasspath = sourceSets["test"].runtimeClasspath
-    val specs = rootProject.layout.projectDirectory.dir("specs").asFile
+    // Gauge はディレクトリ配下の .spec / .md をすべて Spec として解析するため、
+    // 案内文書（specs/README.md）と同じ階層を指すと ParseError になる。題材ごとの
+    // サブディレクトリを指し、README は specs/ 直下に残す（docs/decisions.md H37 の改訂）。
+    val specs = rootProject.layout.projectDirectory.dir("specs/warehouse").asFile
 
     inputs.files(stepClasspath)
     inputs.dir(specs)

@@ -2063,9 +2063,11 @@ Gradle に `latest.release` を解決させて実測し直した。プラグイ�
   `gauge_custom_classpath`（test の `runtimeClasspath`）と `gauge_specs_dir`（ルートの `specs/`）を環境変数で渡す。
 - タグの絞り込みは `./gradlew :warehouse-atdd:gauge -Ptags=harness`。
 - `libs.versions.toml` からプラグインの版を落とす（`playwright` / `gauge-java` は残る）。
-- **積み残し**: Gauge が [`../specs/README.md`](../specs/README.md) を Spec として解析して `ParseError` を出す
-  （検証は続行するので致命的ではないが、実行のたびにノイズが出る）。`.spec` をサブディレクトリへ移して
-  `gauge_specs_dir` をそこへ向けるのが有力。**M3-a のステップ実装1本目を書くときに決める。**
+- **Spec 本体は題材ごとのサブディレクトリに置く**（`specs/warehouse/*.spec`）。Gauge は指定ディレクトリ配下の
+  `.spec` / `.md` を**すべて Spec として解析する**ため、案内文書 [`../specs/README.md`](../specs/README.md) が
+  `ParseError` になっていた。`gauge_specs_dir` を `specs/warehouse` に向けて解消した。
+  README は `specs/` 直下に残る（[H31](#h31-受入シナリオの置き場と粒度) の「`specs/` に受入仕様一式」は保たれる）。
+  第2弾のポイントウォレット（M6）は `specs/wallet/` に置けるので、題材が増えても同じ形で足せる。
 
 ---
 

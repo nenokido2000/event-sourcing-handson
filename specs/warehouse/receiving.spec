@@ -5,7 +5,7 @@ tags: m3-a
 受入ドックに届いた在庫を棚へ格納すると、**格納伝播ポリシー（P1）**が在庫へ計上して引当可能になる。
 入荷集約と在庫集約は別トランザクションなので、計上は**結果整合**で届く。
 
-仕様の正: [`docs/tactical-design.md`](../docs/tactical-design.md) の集約②入荷 / ポリシー P1。
+仕様の正: [`docs/tactical-design.md`](../../docs/tactical-design.md) の集約②入荷 / ポリシー P1。
 
 ## 格納した在庫が引当可能になる
 

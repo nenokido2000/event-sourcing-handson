@@ -43,12 +43,15 @@ Playwright を使うのは request API（ブラウザを起動せず HTTP リク
 
 ## ファイル構成
 
+Spec 本体は**題材ごとのサブディレクトリ**に置く（この案内文書を Gauge が Spec として
+解析しないようにするため。理由は [`decisions.md`](../docs/decisions.md#h37-受入テストハーネスの版と-gradle-組み込み方) の改訂）。
+
 | ファイル | 対応するスライス | 中身 |
 |---|---|---|
-| [`receiving.spec`](receiving.spec) | M3-a | 入荷 → 格納 → 在庫計上（P1） |
-| [`allocation.spec`](allocation.spec) | M3-a ★コア | 受注 → 引当（P2）。**不変条件 引当可能 ≥ 0** |
-| [`shipping.spec`](shipping.spec) | M3-a | 出荷指示 → ピッキング → 払出（P3）→ 出荷／取消 → 引当解放（P6） |
-| [`stocktaking.spec`](stocktaking.spec) | M3-b | 棚卸開始 → 凍結（P5）→ カウント → 調整（P4）→ クローズ → 解凍 |
+| [`warehouse/receiving.spec`](warehouse/receiving.spec) | M3-a | 入荷 → 格納 → 在庫計上（P1） |
+| [`warehouse/allocation.spec`](warehouse/allocation.spec) | M3-a ★コア | 受注 → 引当（P2）。**不変条件 引当可能 ≥ 0** |
+| [`warehouse/shipping.spec`](warehouse/shipping.spec) | M3-a | 出荷指示 → ピッキング → 払出（P3）→ 出荷／取消 → 引当解放（P6） |
+| [`warehouse/stocktaking.spec`](warehouse/stocktaking.spec) | M3-b | 棚卸開始 → 凍結（P5）→ カウント → 調整（P4）→ クローズ → 解凍 |
 
 ## 書式
 
