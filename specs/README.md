@@ -120,7 +120,7 @@ Gauge の Markdown Spec。`# 仕様` / `## シナリオ` / `* ステップ`（�
 
 | ステップ | 意味 |
 |---|---|
-| `直前の要求は <例外> で拒否される` | 同期のコマンド拒否。例外名は [`docs/tactical-design.md`](../docs/tactical-design.md) の例外一覧が正 |
+| `直前の要求は <例外> で拒否される` | 同期のコマンド拒否。例外名は [`docs/tactical-design.md`](../docs/tactical-design.md) の**集約ごとの例外一覧**（強整合の受付ゲート）と**前段バリデーション**の表（best effort・[H47](../docs/decisions.md#h47-前段バリデーションの枠組み)）が正。`DuplicateStocktakeException` は後者 |
 
 **ポリシーの中での失敗はこのステップでは観測できない**（要求そのものは受理されている）。
 その場合はビューが「そこまでしか動かないこと」で確かめる（例: 在庫が足りない注文の部分引当）。
