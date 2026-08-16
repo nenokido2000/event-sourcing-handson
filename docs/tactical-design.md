@@ -151,7 +151,7 @@ flowchart TB
     subgraph AG_SHIP["🚚 出荷 Shipment"]
       E_REQ["出荷が指示された<br/>(ShipmentRequested)"]:::evt
       E_PICK["在庫がピッキングされた<br/>(StockPicked)<br/>ピッキング累計"]:::evt
-      E_SHIP["在庫が出荷された<br/>(StockShipped)<br/>出荷明細＋未出荷明細"]:::evt
+      E_SHIP["在庫が出荷された<br/>(StockShipped)<br/>出荷実績明細（出た量＋残った量）"]:::evt
       E_CANCEL["出荷が取り消された<br/>(ShipmentCancelled)<br/>取消明細＋理由"]:::evt
     end
     subgraph AG_STK["📋 棚卸 Stocktake（差異は持たない）"]
@@ -831,9 +831,11 @@ record StockPicked(ShipmentId shipmentId, AllocationId allocationId,
 #### 3. 出荷する（`ShipStock`）— 起点: 倉庫作業者（出荷担当）
 
 ```java
+record ShippedLine(AllocationId allocationId, Sku sku, LocationId locationId,
+                   Quantity shippedQty, Quantity unshippedQty)   // 出荷実績明細
+
 record ShipStock(ShipmentId shipmentId, ShipmentCompletion completion)
-record StockShipped(ShipmentId shipmentId, List<ShipmentLine> shippedLines,
-                    List<ShipmentLine> unshippedLines, ShipmentCompletion completion)
+record StockShipped(ShipmentId shipmentId, List<ShippedLine> lines, ShipmentCompletion completion)
 enum ShipmentCompletion { COMPLETE, SHORTAGE }   // 全量出荷 / 欠品を残して完了
 ```
 
@@ -852,8 +854,12 @@ enum ShipmentCompletion { COMPLETE, SHORTAGE }   // 全量出荷 / 欠品を残�
 - **`COMPLETE` をコマンドで指定できる**のは入荷（`COMPLETED` は自動発行専用 / H14）と**逆**。
   出荷は残ゼロでも「これで終わりにする」という人の意思が入るため。
   → [`decisions.md`](decisions.md#h16-欠品したまま終わる出荷の終わらせ方)
-- `shippedLines` / `unshippedLines` を載せる理由: 下流（リードモデル・**P6**）が
-  出荷集約を引かずに処理できるようにするため。
+- **明細を載せる理由**: 下流（リードモデル・**P6**）が出荷集約を引かずに処理できるようにするため。
+- **明細1件＝1行**で、出た量（`shippedQty`）と残った量（`unshippedQty`）を**同じ行に持つ**
+  （[H44](decisions.md#h44-出荷イベントが持つ明細の形)）。部分ピッキングのまま欠品で完了すると1つの引当が
+  「10出荷・20未出荷」に割れるので、2つのリストに振り分けると事実が落ちる。
+  出荷集約の構造（`Map<AllocationId, Line>`）とイベントの形が一致する。
+  `ShipmentLine`（数量1つ）は出荷指示と取消で使う——そちらは**全明細が未ピッキング**なので引当量だけで足りる。
 - 状態遷移: `shipped = true`
 
 #### 4. 出荷を取り消す（`CancelShipment`）— 起点: 外部トリガ（注文取消）・タイマー（期限切れ）
@@ -932,7 +938,7 @@ BC 間の語彙の写像（`SHORTAGE` → `SHORT_SHIPPED` 等）も P6 が担う
 12. 部分ピッキングのまま `COMPLETE` で出荷しようとすると拒否される
 
 **欠品での完了・取消（H16）**
-13. 未ピッキング残を残したまま `SHORTAGE` で出荷すると、**出荷明細と未出荷明細を持つ**イベントが出る
+13. 未ピッキング残を残したまま `SHORTAGE` で出荷すると、**出た量と残った量を同じ行に持つ**イベントが出る（H44）
 14. 未ピッキング残が無いのに `SHORTAGE` を指定すると拒否される
 15. 1件もピッキングせずに出荷しようとすると拒否される
 16. ピッキング前なら出荷を取り消せ、**全明細が取消明細として**イベントに乗る
@@ -1364,13 +1370,14 @@ P2 は**三重に守られている**ので、`OrderAccepted` を2回処理し�
 ### 入力と出力
 
 ```
-StockShipped(未出荷残あり)  → DeallocateStock(InventoryItemId.of(sku, locationId), allocationId, SHORT_SHIPPED)  × 未出荷明細
+StockShipped               → DeallocateStock(InventoryItemId.of(sku, locationId), allocationId, SHORT_SHIPPED)  × unshippedQty > 0 の行
 ShipmentCancelled          → DeallocateStock(InventoryItemId.of(sku, locationId), allocationId, 取消理由の写像)   × 取消明細（＝全明細）
 ```
 
-- 全量出荷（`COMPLETE`）では**何も送らない**。引当は払出で消化済み。
-- 出荷イベントが `unshippedLines` / `cancelledLines` を持つ（③出荷スライス）ので、
-  **P6 は出荷集約を引かずに済む**。
+- 全量出荷（`COMPLETE`）では全行が `unshippedQty = 0` なので**何も送らない**。引当は払出で消化済み。
+- 出荷イベントが明細（出荷実績明細 / `cancelledLines`）を持つ（③出荷スライス）ので、
+  **P6 は出荷集約を引かずに済む**。判定は**行ごとの `unshippedQty`**
+  （[H44](decisions.md#h44-出荷イベントが持つ明細の形)）。
 
 ### 1:N だが状態を持たない（H17）
 
@@ -1405,7 +1412,7 @@ BC をまたぐ直接依存を作らない、の具体形）。
 
 ### テスト骨子（イベント入力 → 送られるコマンド）
 
-1. 欠品出荷（`SHORTAGE`）では、**未出荷明細の数だけ** `DeallocateStock(SHORT_SHIPPED)` が送られる
+1. 欠品出荷（`SHORTAGE`）では、**`unshippedQty > 0` の行の数だけ** `DeallocateStock(SHORT_SHIPPED)` が送られる（H44）
 2. 全量出荷（`COMPLETE`）では**1件も送らない**
 3. 出荷取消では、**全明細**に `DeallocateStock` が送られ、取消理由が写像される
 4. 同じイベントを2回処理しても、2回目は在庫側が冪等に無視する（引当済は1回ぶんしか戻らない）

@@ -60,6 +60,7 @@
 | [H41](#h41-リードモデルの顔ぶれを絞った基準) | リードモデルの顔ぶれを絞った基準 | 読み手がいるものだけ実装する（ピックリストビューは引当ビューに包含） | 確定 | 2026-08-15 |
 | [H42](#h42-p1-の二重計上を検出する起点識別子) | P1 の二重計上を検出する起点識別子 | ドメインの自然キー `(入荷ID, 格納累計)` を運ぶ（Axon の相関データを使わない） | 確定 | 2026-08-16 |
 | [H43](#h43-bc-をまたぐ識別子の帰属) | BC をまたぐ識別子の帰属 | 複合IDは構造に使う BC だけが持ち、単一IDは同名別型（共有カーネルは広げない） | 確定 | 2026-08-16 |
+| [H44](#h44-出荷イベントが持つ明細の形) | 出荷イベントが持つ明細の形 | 出荷実績明細1行に出た量と残った量を持たせる（2リストに割らない） | 確定 | 2026-08-16 |
 
 **保留・暫定の扱い**: H5 は M3+ の改修シナリオ候補として温存（分析には現れるが M3 の最初のスライスには入れない）。
 H11 は実績データがないための**暫定**であり、見直しの前提が明記されている（下記参照）。
@@ -661,6 +662,8 @@ enum CancellationReason { ORDER_CANCELLED, EXPIRED }  // 注文取消 / 期限�
 
 - **イベントに残明細（`unshippedLines` / `cancelledLines`）を載せる**ので、
   P6 は出荷集約もリードモデルも引かずにコマンドを組み立てられる（P1 が `StockPutAway` に `sku` を載せたのと同じ理由）。
+  → **明細の形は [H44](#h44-出荷イベントが持つ明細の形) で確定**（2026-08-16）。数量が何を指すかが未定義だったため、
+  2リストではなく**出荷実績明細1行に出た量と残った量を持たせる**形にした。載せる理由（下流が集約を引かない）は変わらない。
 - **P6 が BC 間の語彙を翻訳する**: 出荷側の `ShipmentCompletion` / `CancellationReason` を
   在庫側の `DeallocationReason` へ写像する（`SHORTAGE` → `SHORT_SHIPPED`、
   `ORDER_CANCELLED` → `ORDER_CANCELLED`、`EXPIRED` → `EXPIRED`）。
@@ -2563,6 +2566,77 @@ P1 経由でないイベントでは両方 null（一意制約は null を重複
   その表には集約固有の識別子も並んでいて、context-map 自身の記述（集約固有の識別子は共有しない）より広かった。
   **表を「共有カーネル」と「BC ごとの識別子」に分ける。**
 - **受入 Spec は変更なし**。`specs/` はステップの引数を文字列で書いており、型の帰属に触れていない。
+
+---
+
+## H44 出荷イベントが持つ明細の形
+
+**状態**: 確定（2026-08-16 / M3-a 着手前の全体ウォークスルーで検出）
+
+### 文脈
+
+[H16](#h16-欠品したまま終わる出荷の終わらせ方) は「`StockShipped` に**出荷明細＋未出荷明細**を載せる」と決めた。
+下流（リードモデル・P6）が出荷集約を引かずに処理できるようにするためで、この方針は正しい。
+
+**ただし数量が何を指すかを定義していなかった。**
+
+```java
+record StockShipped(ShipmentId, List<ShipmentLine> shippedLines,
+                    List<ShipmentLine> unshippedLines, ShipmentCompletion)
+```
+
+`ShipmentLine.quantity` は `RequestShipment` の文脈では**引当量**である。`StockShipped` の2つのリストでは
+出荷した数量なのか引当量なのかが決まっておらず、**部分ピッキングのまま欠品で完了すると1つの引当が割れる**
+（`specs/warehouse/shipping.spec` の欠品シナリオ＝引当30・ピッキング10 で `SHORTAGE`）。
+
+先に確認したこととして、**P6 は数量を使わない**。`DeallocateStock` は全量解除で、戻る数量（未払出残）は
+在庫集約が自分で出す（[H17](#h17-宙に浮いた引当を誰が解放するか)）。P6 に要るのは「どの引当を解除するか」だけなので、
+論点は**イベントが事実を正確に表しているか**に絞られる。
+
+### 決定
+
+**出荷実績明細（`ShippedLine`）を新設し、1行に出た量と残った量を持たせる。**
+
+```java
+record ShippedLine(AllocationId allocationId, Sku sku, LocationId locationId,
+                   Quantity shippedQty, Quantity unshippedQty)
+
+record StockShipped(ShipmentId shipmentId, List<ShippedLine> lines, ShipmentCompletion completion)
+```
+
+引当30・ピッキング10 で欠品完了すると `lines = [(OL-1@A-01, SKU-A, A-01, 10, 20)]` の1行になる。
+P6 は **`unshippedQty > 0` の行**に `DeallocateStock` を送る。
+
+**明細1件＝1行**なので、出荷集約の構造（`Map<AllocationId, Line>`）とイベントの形が一致する。
+`ShipmentLine` は出荷指示（`RequestShipment` / `ShipmentRequested`）と取消（`ShipmentCancelled`）で
+引き続き使う——そちらは**全明細が未ピッキング**なので、引当量1つで足りる
+（[H16](#h16-欠品したまま終わる出荷の終わらせ方) の「ピッキング済みの出荷は取り消せない」の帰結）。
+
+### 検討した選択肢と却下理由
+
+- **却下: 2リストのまま数量の意味を定義する**（`shippedLines` の quantity＝出荷した数量、
+  `unshippedLines` の quantity＝未出荷の数量、同じ引当IDが両方に出うる）。変更が文書だけで済む最小の案。
+  却下したのは、**「2つのリストに同じ識別子が出る」という説明が常に必要になる**ため。
+  読み手は毎回「排他なのか」を確認しにいくことになり、イベントを見ただけでは分からない。
+- **却下: 排他に振り分ける**（全部取れた明細だけ `shipped`、少しでも残れば `unshipped`）。
+  リストの意味は自明になるが、**部分出荷の情報が落ちる**——`shipped` に入れれば「10出したのか30出したのか」が
+  分からず、`unshipped` に入れれば出した10が消える。
+  [`event-sourcing.md`](../.claude/rules/event-sourcing.md)「イベントは何が起きたかを持つ」に反する。
+- **却下: 明細を持たせず下流が計算する**（`StockShipped` は完了区分だけ）。
+  P6 もリードモデルも出荷集約を引くことになり、[H16](#h16-欠品したまま終わる出荷の終わらせ方) が
+  明細を載せた理由（下流が集約を引かない）を捨てることになる。
+
+### 帰結
+
+- **record が1つ増える**（`ShipmentLine` と `ShippedLine`）。使い分けは「まだ出していない明細」と
+  「出した結果の明細」で、前者は数量が1つ・後者は2つ、という違いが型に出る。
+- **P6 の判定が数量ベースになる**。「未出荷明細の数だけ送る」から「`unshippedQty > 0` の行に送る」へ。
+  件数の解釈が一意になり、テスト骨子も書きやすくなる。
+- **[`ubiquitous-language.md`](ubiquitous-language.md) の `StockShipped` の説明を更新する**
+  （「出荷明細＋未出荷明細＋完了区分」→「出荷実績明細＋完了区分」）。
+- **受入 Spec は変更なし**。`specs/` はビューの値しか見ておらず、イベントの明細の形に触れていない。
+- 全量出荷（`COMPLETE`）では全行が `unshippedQty = 0` になり、P6 は1件も送らない
+  （[`tactical-design.md`](tactical-design.md) の P6 の約束は変わらない）。
 
 ---
 
