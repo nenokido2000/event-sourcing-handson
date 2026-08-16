@@ -58,6 +58,7 @@
 | [H39](#h39-warehouse-domain-のパッケージ配置) | warehouse-domain のパッケージ配置 | BC を第一階層・その中を command / event で分ける・共通VOは共有カーネル | 確定 | 2026-08-15 |
 | [H40](#h40-値オブジェクトの-json-表現) | 値オブジェクトの JSON 表現 | `@JsonValue` で平坦化する（複合IDは文字列表現で1個） | 確定 | 2026-08-15 |
 | [H41](#h41-リードモデルの顔ぶれを絞った基準) | リードモデルの顔ぶれを絞った基準 | 読み手がいるものだけ実装する（ピックリストビューは引当ビューに包含） | 確定 | 2026-08-15 |
+| [H42](#h42-p1-の二重計上を検出する起点識別子) | P1 の二重計上を検出する起点識別子 | ドメインの自然キー `(入荷ID, 格納累計)` を運ぶ（Axon の相関データを使わない） | 確定 | 2026-08-16 |
 
 **保留・暫定の扱い**: H5 は M3+ の改修シナリオ候補として温存（分析には現れるが M3 の最初のスライスには入れない）。
 H11 は実績データがないための**暫定**であり、見直しの前提が明記されている（下記参照）。
@@ -1459,6 +1460,9 @@ PK は全ビューでドメインの識別子になる（[H28](#h28-リードモ
 - `PlaceStock` は冪等にしない。**二重計上は起きうるものとして扱う**。
 - **検出**: `StockPlaced` に起点イベント（`StockPutAway`）の識別子を相関IDとして運び、
   在庫元帳ビューがその列に一意制約を持つ。2本目が弾かれた時点で重複と分かる。
+  → **何を運ぶかは [H42](#h42-p1-の二重計上を検出する起点識別子) で確定**（2026-08-16）。
+  Axon の相関データでは要求を満たせず、ドメインの自然キー `(入荷ID, 格納累計)` を運ぶ形になった。
+  **検出して棚卸で訂正する**という本決定の骨格は変わらない。
 - **訂正**: 実地値で上書きする `AdjustStock`（棚卸調整）で直す。**二重計上は次の棚卸で必ず解消する**。
   打ち消しコマンドも新しいビューも作らない。
 
@@ -2344,6 +2348,103 @@ public record Sku(String value) {
   ②の図と表の食い違いも M1 時点の記録としてそのまま残す。**②だけを読むと矛盾して見える**ので、
   経緯は本ADRから辿る。
 - 容量制約や入荷予定を将来モデル化するなら、**そのとき対応するビューを立て直す**。今それらを先取りしない。
+
+---
+
+## H42 P1 の二重計上を検出する起点識別子
+
+**状態**: 確定（2026-08-16 / M3-a 着手前の全体ウォークスルーで検出）
+
+### 文脈
+
+[H30](#h30-ポリシーの二重発火にどう備えるか) は P1（格納伝播）だけ冪等にできないと結論し、代わりに
+**検出**する道を選んだ——「`StockPlaced` に起点イベント（`StockPutAway`）の識別子を**相関IDとして**運び、
+在庫元帳ビューがその列に一意制約を持つ」。[`tactical-design.md`](tactical-design.md) の在庫元帳ビューにも
+`sourceEventId` 列＋一意制約が入っている。
+
+**ところが型定義に反映されていなかった。**
+
+```java
+record PlaceStock(InventoryItemId inventoryItemId, Quantity quantity, ReceiptId receiptId)
+record StockPlaced(InventoryItemId inventoryItemId, Quantity quantity, ReceiptId receiptId)
+```
+
+どこにも起点の識別子が無い。P1 の伝播表のシグネチャにも無い。**M3-a の1本目（入荷スライス）で最初に手が止まる**
+位置なので、実装より前に決める。
+
+**「相関ID」で運べるかを実測した**（jar の中身を読む方法は [H37](#h37-受入テストハーネスの版と-gradle-組み込み方) 以来の定石）。
+
+- `axon-spring-boot-autoconfigure` の `AxonAutoConfiguration` が **`MessageOriginProvider` を Bean として既定登録**し、
+  `SimpleCommandBus` に `CorrelationDataInterceptor` を掛けている。配線は最初からある。
+- `MessageOriginProvider` が入れるのは2つ。**`correlationId` = 直前のメッセージのID** /
+  **`traceId` = 連鎖の起点のID**（メタデータにあれば引き継ぎ、無ければ自分のID）。
+
+**どちらもそのままでは要求を満たさない。**
+
+| 使う値 | P1 の二重計上を検出できるか | 副作用 |
+|---|---|---|
+| `correlationId` | **✕**。二重発火では同じ `StockPutAway` から**別々の** `PlaceStock` コマンドが作られるので値が変わる | なし |
+| `traceId` | ○（再配信でもイベントに保存された同じ値が乗る） | **✕ 1:N のポリシーで一意制約が誤爆する**。1つの `OrderAccepted` から3件の `StockAllocated` が出ると全部同じ `traceId` になり、元帳ビューの2本目以降が弾かれる |
+
+`traceId` が指すのも厳密には起点**コマンド**（`PutAwayStock`）のIDで、H30 が書いた「起点**イベント**の識別子」とは
+一段ずれる。**論点は「どこに載せるか」だけでなく「何を載せるか」でもあった。**
+
+### 決定
+
+**ドメインの自然キー `(入荷ID, 格納累計)` を運ぶ。Axon の相関データは使わない。**
+
+`StockPutAway` に**格納累計**を載せ、P1 がそれを `PlaceStock` へ渡す。同じ入荷の同じ格納累計は一意なので、
+これが起点の識別子として働く。
+
+```java
+record StockPutAway(ReceiptId receiptId, Sku sku, LocationId locationId,
+                    Quantity quantity, Quantity putAwayTotal)      // ★ 格納累計を追加
+
+record PlaceStock(InventoryItemId inventoryItemId, Quantity quantity,
+                  ReceiptId receiptId, Quantity putAwayTotal)
+record StockPlaced(InventoryItemId inventoryItemId, Quantity quantity,
+                   ReceiptId receiptId, Quantity putAwayTotal)
+```
+
+在庫元帳ビューは `sourceEventId` 単独の列をやめ、**`sourceReceiptId` / `sourcePutAwayTotal` の2列に複合一意制約**を張る。
+P1 経由でないイベントでは両方 null（一意制約は null を重複と見なさない）。
+
+**`StockPicked` が `pickedTotal` を載せて P3 に渡すのと完全に同型**になる。入荷 `putAwayQty`・出荷 `pickedQty`・
+在庫の払出累計で貫いてきた「積み上げた事実を保持し、残りは引き算で出す」流儀（[H30](#h30-ポリシーの二重発火にどう備えるか) の帰結）が、
+**P1 の経路にも揃った**。
+
+### 検討した選択肢と却下理由
+
+- **却下: `StockPlaced` に `sourceEventId`（Axon のイベントID）をフィールドとして載せる**。確実で誤爆もなく、
+  実装は最も単純。却下したのは、**ドメインイベントに配信メカニズム由来の UUID が載る**ため
+  （[`event-sourcing.md`](../.claude/rules/event-sourcing.md)「イベントは何が起きたかだけを持つ」）。
+  採用案とは構造が同じで**載せる値が違うだけ**だが、その違いがルールに正面から効く。加えて、元帳を人が読んだとき
+  UUID は何も語らないのに対し、`(入荷ID, 格納累計)` は「どの格納から来た計上か」が意味として読める
+  （[H34](#h34-観測用-ui-の位置づけ) の観測UI・元帳ビューの狙いと合う）。
+- **却下: メタデータの `traceId` を使う**。ドメインを汚さず、M4 の自作ストアでメタデータ永続化を実装する学びも
+  得られる。却下したのは上表の**誤爆**——回避するには一意制約を `(eventType, sourceEventId)` の複合にするか
+  「`StockPlaced` 由来の行にだけ書く」という約束を足すことになり、**リードモデルにイベント種別ごとの
+  例外規則が入り込む**。読み側を素直に保つほうを採る。
+- **却下: メタデータの `correlationId` を使う**。名前は最も近いが、上表のとおり**検出したいケースでだけ値が変わる**
+  ので用をなさない。
+- **却下: `PlaceStock` を冪等にする**。[H30](#h30-ポリシーの二重発火にどう備えるか) が既に却下済み
+  （在庫集約が「入荷×ロケーション別の適用済み量」を覚えると、終わりの印が無いので永久に増える）。
+  **本決定でも P1 は冪等にならない**——検出のキーがドメインの値になるだけで、H30 の結論は動かない。
+
+### 帰結
+
+- **`StockPutAway` に `putAwayTotal` が増える**。入荷集約が既に持っている値（`putAwayQty`）を渡すだけで、
+  新しい状態は要らない。`StockPicked` が `pickedTotal` を載せるのと同じ理屈。
+- **在庫元帳ビューの列が変わる**（`sourceEventId` → `sourceReceiptId` / `sourcePutAwayTotal`）。
+  検出の仕組み（一意制約で2本目を弾く）と訂正の方針（棚卸調整で直す）は H30 のまま。
+- **`cause` 列の定義に `ReceiptId` を足す**。計上（`StockPlaced`）の原因は入荷なのに、
+  `AllocationId` / `StocktakeId` / `ShipmentId` しか挙がっていなかった（本決定と同時に見つかった漏れ）。
+  `cause` は**人が読む原因**、`source*` は**重複検出のキー**で役割が違うため、兼ねさせず別の列に保つ。
+- **Axon の相関データに依存しない**ので、M4（DynamoDB イベントストア）でメタデータの永続化が
+  重複検出の必須要件にならない。メタデータ自体は Axon が付けるので保存はするが、**ドメインの正しさが
+  そこに乗らない**。M5（4.x→5.x）でメタデータ API が変わっても影響を受けない。
+- 受入 Spec は**変更なし**。`receiving.spec` は元帳の行の並びしか見ておらず、検出は内側のテスト
+  （[`tactical-design.md`](tactical-design.md) のリードモデルのテスト骨子9）で押さえる。
 
 ---
 

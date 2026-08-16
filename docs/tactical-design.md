@@ -371,8 +371,10 @@ stateDiagram-v2
 #### 1. 在庫を計上する（`PlaceStock`）— 起点: ポリシー P1（格納伝播）
 
 ```java
-record PlaceStock(InventoryItemId inventoryItemId, Quantity quantity, ReceiptId receiptId)
-record StockPlaced(InventoryItemId inventoryItemId, Quantity quantity, ReceiptId receiptId)
+record PlaceStock(InventoryItemId inventoryItemId, Quantity quantity,
+                  ReceiptId receiptId, Quantity putAwayTotal)
+record StockPlaced(InventoryItemId inventoryItemId, Quantity quantity,
+                   ReceiptId receiptId, Quantity putAwayTotal)
 ```
 
 | 受付ゲート（拒否条件） | 例外 |
@@ -382,6 +384,9 @@ record StockPlaced(InventoryItemId inventoryItemId, Quantity quantity, ReceiptId
 
 - **集約の誕生**: `@CreationPolicy(CREATE_IF_MISSING)`。その棚マスに初めて物が入った瞬間に集約が生まれる
   （分析の「格納で誕生」に忠実。棚マスタ登録という概念をドメインに増やさない）。
+- **`putAwayTotal`（格納累計）を運ぶ理由**: `(receiptId, putAwayTotal)` が起点の `StockPutAway` を一意に指すので、
+  在庫元帳ビューがこれを複合一意制約で受けて**P1 の二重計上を検出できる**（[H42](decisions.md#h42-p1-の二重計上を検出する起点識別子)）。
+  集約はこの値を**判断に使わない**（受付ゲートに現れない）——下流へ運ぶためだけに通す。
 - 状態遷移: `onHand += quantity`
 
 #### 2. 引き当てる（`AllocateStock`）— 起点: ポリシー P2（引当）★コア
@@ -622,7 +627,8 @@ record StockReceived(ReceiptId receiptId, Sku sku, Quantity quantity)
 
 ```java
 record PutAwayStock(ReceiptId receiptId, LocationId locationId, Quantity quantity)
-record StockPutAway(ReceiptId receiptId, Sku sku, LocationId locationId, Quantity quantity)
+record StockPutAway(ReceiptId receiptId, Sku sku, LocationId locationId,
+                    Quantity quantity, Quantity putAwayTotal)
 ```
 
 | 受付ゲート（拒否条件） | 例外 |
@@ -634,6 +640,10 @@ record StockPutAway(ReceiptId receiptId, Sku sku, LocationId locationId, Quantit
 - **分割格納を許す**（1入荷を複数ロケーションへ分けて置くのは現実に起きる）。ロケーションは**格納時に確定**する。
 - イベントに `sku` を載せるのは、**ポリシー P1 が入荷集約を引かずに `PlaceStock` を組み立てられる**ようにするため
   （在庫の識別子は `(Sku, LocationId)`）。プロジェクションが集約の状態を引かないのと同じ理由。
+- **`putAwayTotal`（格納累計）も載せる**。`(receiptId, putAwayTotal)` が**この格納を一意に指す**ので、
+  在庫元帳ビューが P1 の二重計上を検出する鍵になる（[H42](decisions.md#h42-p1-の二重計上を検出する起点識別子)）。
+  出荷が `StockPicked` に `pickedTotal` を載せて P3 に渡すのと同型で、集約が既に持っている値
+  （格納後の `putAwayQty`）を渡すだけ。新しい状態は要らない。
 - **残格納量がゼロになったら、続けて `InboundReceiptClosed(残量0, COMPLETED)` を原子的に発行する**（H14）。
 - 状態遷移: `putAwayQty += quantity`（残ゼロならクローズ）
 
@@ -1106,12 +1116,12 @@ StocktakeClosed   → P5（棚卸凍結）→ UnfreezeStock(inventoryItemId, sto
 
 | | 受けるイベント（発行元） | 送るコマンド（宛先） | 冪等か |
 |---|---|---|---|
-| **P1** 格納伝播（`PutawayPolicy`） | `StockPutAway`（入荷） | `PlaceStock(InventoryItemId(sku, locationId), quantity, receiptId)`（在庫） | **✕**（H30） |
+| **P1** 格納伝播（`PutawayPolicy`） | `StockPutAway`（入荷） | `PlaceStock(InventoryItemId(sku, locationId), quantity, receiptId, putAwayTotal)`（在庫） | **✕**（H30） |
 | **P3** 出庫反映（`FulfillmentPolicy`） | `StockPicked`（出荷） | `IssueStock(inventoryItemId, allocationId, pickedTotal)`（在庫） | ○（H30） |
 | **P4** 棚卸反映（`StocktakePolicy`） | `StockCounted`（棚卸） | `AdjustStock(inventoryItemId, countedQuantity, stocktakeId)`（在庫） | ○（H10 の絶対値） |
 
 - **どれも他集約・リードモデルを引かない**。組み立てに要る値はイベントに載っている
-  （P1 の `sku`／P3 の `inventoryItemId` と `pickedTotal`）。ポリシーが読みに行くのは P2（引当先の選定）だけ。
+  （P1 の `sku` と `putAwayTotal`／P3 の `inventoryItemId` と `pickedTotal`）。ポリシーが読みに行くのは P2（引当先の選定）だけ。
 - **P4 はカウントごとの即時伝播**（クローズ時の一括ではない。[H20](decisions.md#h20-カウントを在庫へ伝えるタイミング)）。
 - 3本とも**入口（格納）・出口（払出）・訂正（調整）で同じ形**をしている。集約をまたぐ整合を
   イベント＋ポリシーで結果整合にする（[H6](decisions.md#h6-受入在庫の集約帰属)）ことの、いちばん素直な現れ。
@@ -1164,8 +1174,10 @@ class PutawayPolicy {
 
 - **P3・P4 は受け側が冪等**なので、再送は差分ゼロになって消える。何もしなくてよい。
 - **P1 だけ冪等にできない**（`PlaceStock` は在庫に痕跡を残さないので、集約側に冪等判定の足場がない）。
-  そのため **P1 は起点イベント `StockPutAway` の識別子を相関IDとして運ぶ**。
-  `StockPlaced` まで伝わったそれを在庫元帳ビューが `sourceEventId` として受け、一意制約で**2本目を検出する**。
+  そのため **P1 は起点を指すドメインの自然キー `(receiptId, putAwayTotal)` を運ぶ**
+  （[H42](decisions.md#h42-p1-の二重計上を検出する起点識別子)。Axon の相関データは使わない——
+  `correlationId` は検出したいケースでだけ値が変わり、`traceId` は 1:N のポリシーで誤爆するため）。
+  `StockPlaced` まで伝わったそれを在庫元帳ビューが受け、**複合一意制約で2本目を検出する**。
 - **訂正は棚卸調整**（`AdjustStock`）。二重計上は**次の棚卸で必ず解消する**ので、打ち消しコマンドは作らない。
 - 「隠さず既知の穴として書き、人に見せる」という扱いは片落ち（H22）・終わらない Saga（H27）と同じ。
 
@@ -1187,7 +1199,7 @@ class PutawayPolicy {
 6. 同じ `StockPicked` を2回処理しても、在庫の手持在庫は1回ぶんしか減らない（累計方式）
 7. 同じ `StockCounted` を2回処理しても、2回目は差分ゼロでイベントが出ない
 8. 同じ `StockPutAway` を2回処理すると**手持在庫は二重に増える**が、
-   在庫元帳ビューが `sourceEventId` の一意制約で**重複を検出する** ★既知の穴
+   在庫元帳ビューが `(sourceReceiptId, sourcePutAwayTotal)` の複合一意制約で**重複を検出する** ★既知の穴
 
 ---
 
@@ -1585,15 +1597,18 @@ WHERE locationId IN (?) AND frozen
 | `inventoryItemId` / `skuId` / `locationId` | | |
 | `eventType` | enum | 計上 / 引当 / 解除 / 払出 / 調整 / 凍結 / 解凍 |
 | `onHandDelta` / `allocatedDelta` | 符号付き | 動かない側は 0（例: 引当は `onHandDelta = 0`） |
-| `cause` | | `AllocationId` / `StocktakeId` / `ShipmentId` のいずれか |
-| `sourceEventId` | `?` ＋**一意制約** | 起点イベントの識別子。**P1 の二重計上の検出用**（H30） |
+| `cause` | | `ReceiptId` / `AllocationId` / `StocktakeId` / `ShipmentId` のいずれか（人が読む原因） |
+| `sourceReceiptId` / `sourcePutAwayTotal` | `?` ＋**複合一意制約** | 起点の格納を指すドメインの自然キー。**P1 の二重計上の検出用**（[H42](decisions.md#h42-p1-の二重計上を検出する起点識別子)） |
 
 - **追記専用**。行を更新しないので `lastEventPosition` を持たない。
-- **`sourceEventId` が要る理由（H30）**: `PlaceStock` だけは冪等にできないので、P1 が二重発火すると
+- **検出用の列が要る理由（H30）**: `PlaceStock` だけは冪等にできないので、P1 が二重発火すると
   `StockPlaced` が**別々のイベントID で2本**出る。`eventId` の一意制約では弾けない。
-  起点の `StockPutAway` の識別子をポリシーが相関IDとして運び、この列の一意制約で**2本目を重複として検出する**。
-  訂正は棚卸調整（`AdjustStock`）＝**次の棚卸で必ず解消する**ので、専用の打ち消し手段は作らない。
-- ポリシー経由でないイベント（人が直接打つ調整など）では null。一意制約は null を重複と見なさない。
+  起点の格納を指す `(receiptId, putAwayTotal)` をポリシーが運び、この2列の複合一意制約で
+  **2本目を重複として検出する**。訂正は棚卸調整（`AdjustStock`）＝**次の棚卸で必ず解消する**ので、
+  専用の打ち消し手段は作らない。
+- **`cause` と兼ねさせない**。`cause` は人が履歴を読むための原因、検出用の2列は重複判定のキーで役割が違う
+  （[H42](decisions.md#h42-p1-の二重計上を検出する起点識別子)）。
+- P1 経由でないイベント（引当・払出・調整など）では両方 null。一意制約は null を重複と見なさない。
 
 ### 棚卸差異ビュー（`StocktakeVarianceView`）
 
@@ -1650,7 +1665,8 @@ WHERE locationId IN (?) AND frozen
 6. 棚卸差異ビュー: `StockCounted` だけの時点で `adjustedAt` が null、`StockAdjusted` で埋まる ★2段
 7. 棚卸差異ビュー: **同じ対象を2回数えると行は1つ**（最新の実地値で上書き。H20）
 8. 在庫元帳ビュー: イベント列と同じ本数・同じ順序で行が並ぶ
-9. 在庫元帳ビュー: **同じ起点イベントから2本目の計上が来ると一意制約で弾かれる**（P1 の二重計上の検出。H30）
+9. 在庫元帳ビュー: **同じ格納（`入荷ID` × `格納累計`）から2本目の計上が来ると複合一意制約で弾かれる**
+   （P1 の二重計上の検出。H30 / [H42](decisions.md#h42-p1-の二重計上を検出する起点識別子)）
 
 ---
 
