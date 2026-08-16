@@ -19,7 +19,7 @@
 
 ## モジュール構成（責務の正は [`docs/decisions.md`](docs/decisions.md) H33）
 - `warehouse-domain` … 集約（`@CommandHandler` 込み）・コマンド・イベント・値オブジェクト。**Axon には依存するが Spring には依存しない**
-- `warehouse-command` … ポリシー P1〜P4・P6 / サーガ P5。**リードモデルは `QueryGateway` で読む**（query へコンパイル依存しない）
+- `warehouse-command` … ポリシー P1〜P4・P6・P7 / サーガ P5。**リードモデルは `QueryGateway` で読む**（query へコンパイル依存しない）
 - `warehouse-query` … プロジェクション・リードモデル（JPA）・クエリハンドラ。**ドメインの値オブジェクトを JPA エンティティに持ち込まない**
 - `warehouse-eventstore-dynamodb` … 自作 `AbstractEventStorageEngine`（M4で追加）
 - `warehouse-app` … Spring Boot起動・REST API・Axon設定・前段バリデーション（＋M3-cで観測UI）

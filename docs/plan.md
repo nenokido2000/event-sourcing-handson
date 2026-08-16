@@ -88,7 +88,7 @@ event-sourcing/
   infra/                         # docker-compose(DynamoDB Local, PostgreSQL), 初期化スクリプト
   infra/terraform/               # M8で追加: AWS本番のIaC（VPC/ECS/ALB/RDS/DynamoDB/Lambda/ECR…をモジュール分割）
   warehouse-domain/              # 集約(@CommandHandler込み)・コマンド・イベント・値オブジェクト（H33）
-  warehouse-command/             # ポリシー P1〜P4・P6 / サーガ P5（H33）
+  warehouse-command/             # ポリシー P1〜P4・P6・P7 / サーガ P5（H33・[H46](decisions.md#h46-出荷指示前に注文が取り消されたときの引当解放)）
   warehouse-query/               # プロジェクション・リードモデル(JPA)・クエリハンドラ
   warehouse-eventstore-dynamodb/ # M4で追加: AbstractEventStorageEngine のDynamoDB実装
   warehouse-app/                 # Spring Boot起動・REST API・Axon設定・前段バリデーション（＋M3-cで観測UI）
@@ -104,7 +104,7 @@ event-sourcing/
   - **進め方＝1集約1スライス**（M1 と同じ刻み方）。M1 で洗い出した4集約＋ポリシー/リードモデルをそのまま①〜⑤とし、コア（在庫）から順に型レベルまで確定させる。
   - **進捗表は [`tactical-design.md`](tactical-design.md) の冒頭**（スライスごとの確定日）。決定は [`decisions.md`](decisions.md) に H番号で記録する。
 - **M3 — 倉庫実装 (Axon 4.x / 組み込みストア)**: M2 で確定した**4集約すべて**を動かす + リードモデル + REST API。**TDD＋ATDDの二重ループで実装**する。
-  - **刻み方**: (3-a) 受入→引当→出荷の**動く垂直スライス**（P1・P2・P3・P6）→ (3-c) **観測用UI**（[H34](decisions.md#h34-観測用-ui-の位置づけ)）→ (3-b) **棚卸**（集約④・P4・サーガ P5・棚卸差異／干渉ビュー）。M2 の①〜⑤と同じく、薄く通してから足す。
+  - **刻み方**: (3-a) 受入→引当→出荷の**動く垂直スライス**（P1・P2・P3・P6・P7）→ (3-c) **観測用UI**（[H34](decisions.md#h34-観測用-ui-の位置づけ)）→ (3-b) **棚卸**（集約④・P4・サーガ P5・棚卸差異／干渉ビュー）。M2 の①〜⑤と同じく、薄く通してから足す。
   - **REST API の契約は [H38](decisions.md#h38-受入ステップが叩く-rest-api-の契約) が正**（実装は⑦で最後だが、ステップ実装を書くために契約だけ M3-a 着手時に固定した）。
   - **アプリケーションアーキテクチャは [H33](decisions.md#h33-アプリケーションアーキテクチャ) が正**（モジュール責務・Axon 結合を許す判断・ポリシーは `QueryGateway` でビューを読む・`@AggregateMember` を使わない・永続化の分離線）。
   - **実装順序は「イベントから内へ」**。受入 Spec を Red にしてゴールを可視化したうえで、

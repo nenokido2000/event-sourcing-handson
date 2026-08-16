@@ -21,20 +21,22 @@ graph TB
     STK["棚卸コンテキスト（Stocktaking）／支援<br/>集約: 棚卸（Stocktake）"]:::support
 
     PROC -->|"発注が確定した (U/D)"| RCV
-    ORD -->|"受注が受け付けられた (U/D・引当P2の入力)"| INV
+    ORD -->|"受注が受け付けられた→引当 (P2)<br/>注文が取り消された→引当解除 (P7) (U/D)"| INV
     RCV -->|"在庫が格納された→在庫を計上する (P1・Partnership)"| INV
     INV -->|"引当→出荷(人)＋出庫反映P3 (C/S・下流=出荷)"| FUL
     STK -->|"実地数量がカウントされた→在庫を調整する (P4・U/D)<br/>棚卸開始/クローズ→凍結/解凍 (P5 Saga)"| INV
 ```
 
-凡例: **U/D** = Upstream/Downstream（上流→下流）、**C/S** = Customer/Supplier、**P1〜P4** = [`02-process.md`](event-storming/02-process.md) のポリシー。
+凡例: **U/D** = Upstream/Downstream（上流→下流）、**C/S** = Customer/Supplier、**P1〜P7** = ポリシー
+（顔ぶれの正は [`ubiquitous-language.md`](ubiquitous-language.md)。P1〜P5 の導出は [`02-process.md`](event-storming/02-process.md)、
+P6 は [H17](decisions.md#h17-宙に浮いた引当を誰が解放するか)、P7 は [H46](decisions.md#h46-出荷指示前に注文が取り消されたときの引当解放) で追加）。
 
 ## 関係の詳細
 
 | 上流 → 下流 | 様式 | 統合手段 | 備考 |
 |---|---|---|---|
 | 調達（Procurement） → 入荷（Receiving） | Upstream/Downstream（外部） | 外部トリガ「発注が確定した」 | 内製しない。薄く受ける |
-| 受注（Ordering） → 在庫（Inventory） | Upstream/Downstream（外部） | 外部イベント「受注が受け付けられた」→ 引当ポリシー P2 | 本PoCのコア入力。上流は薄い外部トリガ。**引当は受注成立後の倉庫作業**であり、受注可否を在庫で判断する仕組み（**受注可能量**／ATP）ではない（[H24](decisions.md#h24-引当は受注の前か後か)） |
+| 受注（Ordering） → 在庫（Inventory） | Upstream/Downstream（外部） | 外部イベント「受注が受け付けられた」→ 引当ポリシー P2 ／「注文が取り消された」→ 注文取消解放ポリシー **P7** | 本PoCのコア入力。上流は薄い外部トリガ。**引当は受注成立後の倉庫作業**であり、受注可否を在庫で判断する仕組み（**受注可能量**／ATP）ではない（[H24](decisions.md#h24-引当は受注の前か後か)）。**P2 と P7 が対**——どちらも引当ビューを読む（[H46](decisions.md#h46-出荷指示前に注文が取り消されたときの引当解放)） |
 | 入荷（Receiving） → 在庫（Inventory） | **Partnership**（同一倉庫チーム） | ポリシー P1（在庫が格納された→在庫を計上する） | 格納で在庫をコアへ供給。2集約またぎの結果整合 |
 | 在庫（Inventory） → 出荷（Fulfillment） | Customer/Supplier（出荷=下流） | 出荷は👤アクター駆動（ピッキング/出荷）＋ポリシー P3（在庫がピッキングされた→在庫を払い出す）＋ポリシー **P6**（欠品出荷・出荷取消→残った引当を解除する） | 引当を消化して出荷。消化されなかった引当は P6 が在庫へ返す（[H17](decisions.md#h17-宙に浮いた引当を誰が解放するか)）。P6 は BC 間の語彙も写像する（`SHORTAGE` → `SHORT_SHIPPED`） |
 | 棚卸（Stocktaking） → 在庫（Inventory） | Upstream/Downstream | ポリシー P4（実地数量がカウントされた→在庫を調整する）＋ **サーガ P5**（棚卸開始→凍結／クローズ→解凍） | 棚卸は**実情の把握とレポート**に徹し差異を持たない。実地値を渡し、差分は在庫集約が出す（H10）。P5 は複数の在庫集約にまたがる唯一の Saga |
