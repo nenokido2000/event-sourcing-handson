@@ -279,6 +279,8 @@ public record Quantity(int value) {
 
 > `Quantity` を非負に閉じるため、**引当可能（`available`）は `Quantity` で表さない**（H12 により負を取りうる）。
 > 集約内では `int` の導出計算とし、判定は「引当可能 ≥ 要求量」の形でのみ行う。
+> **引当可能在庫ビューの `available` 列も符号付き**——リードモデルは値オブジェクトを持たない（H29 / H33）が、
+> 仮に `Quantity` 相当の非負で持つと、H12 で負に落ちた棚の行が書けなくなる。
 
 ### 集約識別子の表現（`InventoryItemId`）
 
@@ -1581,12 +1583,12 @@ graph LR
 
 | 列 | 型 | 備考 |
 |---|---|---|
-| `inventoryItemId` | PK | SKU × ロケーション |
-| `skuId` / `locationId` | | 分解して持つ（検索キー） |
-| `onHand` / `allocated` | `Quantity` | |
-| `available` | `Quantity` | **列に持つ**（導出だが best-fit の絞り込み・並べ替えに使う） |
-| `frozen` | `boolean` | 棚卸中 |
-| `frozenByStocktakeId` | `StocktakeId?` | どの棚卸が握っているか（H28 ②）。`frozen` が偽なら null |
+| `inventoryItemId` | PK・文字列 | `SKU@ロケーション` |
+| `skuId` / `locationId` | 文字列 | 分解して持つ（検索キー） |
+| `onHand` / `allocated` | 非負整数 | |
+| `available` | **符号付き整数** | **列に持つ**（導出だが best-fit の絞り込み・並べ替えに使う）。**非負ではない**（H12 で棚卸調整が負を持ち込む） |
+| `frozen` | 真偽 | 棚卸中 |
+| `frozenByStocktakeId` | 文字列? | どの棚卸が握っているか（H28 ②）。`frozen` が偽なら null |
 | `lastEventPosition` | | |
 
 更新元: `StockPlaced` / `StockAllocated` / `StockDeallocated` / `StockIssued` / `StockAdjusted` / `StockFrozen` / `StockUnfrozen`
@@ -1594,8 +1596,8 @@ graph LR
 主なクエリ:
 
 ```sql
--- P2 引当先選定（H25 best-fit ＋ H11 棚卸中は後回し）
-WHERE skuId = ? AND available >= ?  ORDER BY frozen ASC, available ASC  LIMIT 1
+-- P2 引当先の候補取得（計画そのものはポリシーが立てる。手順3〜4）
+WHERE skuId = ? AND available > 0  ORDER BY available ASC, locationId ASC
 -- P5 対象列挙（H27 ①）
 WHERE locationId IN (?)
 -- H23 前段バリデーション（重複開始の予防・best effort）
@@ -1604,19 +1606,26 @@ WHERE locationId IN (?) AND frozen
 
 → 索引は `(skuId, available)` と `(locationId)`。
 
+- **クエリは候補を取るだけ**で、選定規則（賄える棚の best-fit ／賄える棚が無ければ少ない順に使い切る ／
+  非凍結だけで足りるなら棚卸中を使わない）は**ポリシーが計画として組み立てる**（[P2 の手順](#手順明細1件あたり)）。
+  1回の SQL に畳めない——`available >= 要求量` で絞ると「賄える棚が無い」ケースが0行になり、
+  `ORDER BY frozen ASC` では「非凍結を複数使えば足りるのに、賄える凍結中の棚を選んでしまう」ため。
+- **`available > 0` が負の行を自然に外す**（H12 で引当可能が負に落ちた棚には新しい引当が付かない）。
+- 並び順の `locationId ASC` は **H25 の「同点はロケーションID昇順」**（選定を決定的にするため）。
+
 ### 引当ビュー（`AllocationView`）
 
 読み手: 出荷明細の組み立て（`orderLineId` で引く）／ピッキング担当の作業リスト（`shipmentId` で引く・[H41](decisions.md#h41-リードモデルの顔ぶれを絞った基準)）／P2 の再計画（H26）。
 
 | 列 | 型 | 備考 |
 |---|---|---|
-| `allocationId` | PK | `注文明細ID + ロケーションID`（H26） |
-| `orderLineId` | | **`allocationId` を分解して列に持つ**。H26 の再計画がこれで引く |
-| `inventoryItemId` / `skuId` / `locationId` | | |
-| `quantity` | `Quantity` | |
-| `status` | enum | 引当中 / 払出済 / 解除済 |
-| `shipmentId` | `ShipmentId?` | `ShipmentRequested` で埋まる。null = まだ出荷指示なし |
-| `deallocationReason` | `DeallocationReason?` | 解除済のときだけ |
+| `allocationId` | PK・文字列 | `注文明細ID@ロケーションID`（H26） |
+| `orderLineId` | 文字列 | **`allocationId` を分解して列に持つ**。H26 の再計画がこれで引く |
+| `inventoryItemId` / `skuId` / `locationId` | 文字列 | |
+| `quantity` | 非負整数 | |
+| `status` | enum | 引当中 / 払出済 / 解除済（**ビュー固有**。ドメインには無い） |
+| `shipmentId` | 文字列? | `ShipmentRequested` で埋まる。null = まだ出荷指示なし |
+| `deallocationReason` | 文字列? | 解除済のときだけ（`DeallocationReason` の名前を落とす） |
 | `lastEventPosition` | | |
 
 更新元: `StockAllocated` / `StockDeallocated` / `StockIssued` / `ShipmentRequested`
@@ -1629,14 +1638,14 @@ WHERE locationId IN (?) AND frozen
 
 | 列 | 型 | 備考 |
 |---|---|---|
-| `eventId` | PK | **一意制約が冪等性そのもの**（H28 ①） |
+| `eventId` | PK・文字列 | **一意制約が冪等性そのもの**（H28 ①） |
 | `globalIndex` | | 並び順 |
 | `occurredAt` | | |
-| `inventoryItemId` / `skuId` / `locationId` | | |
-| `eventType` | enum | 計上 / 引当 / 解除 / 払出 / 調整 / 凍結 / 解凍 |
-| `onHandDelta` / `allocatedDelta` | 符号付き | 動かない側は 0（例: 引当は `onHandDelta = 0`） |
-| `cause` | | `ReceiptId` / `AllocationId` / `StocktakeId` / `ShipmentId` のいずれか（人が読む原因） |
-| `sourceReceiptId` / `sourcePutAwayTotal` | `?` ＋**複合一意制約** | 起点の格納を指すドメインの自然キー。**P1 の二重計上の検出用**（[H42](decisions.md#h42-p1-の二重計上を検出する起点識別子)） |
+| `inventoryItemId` / `skuId` / `locationId` | 文字列 | |
+| `eventType` | enum | 計上 / 引当 / 解除 / 払出 / 調整 / 凍結 / 解凍（**ビュー固有**） |
+| `onHandDelta` / `allocatedDelta` | 符号付き整数 | 動かない側は 0（例: 引当は `onHandDelta = 0`） |
+| `cause` | 文字列 | 入荷ID / 引当ID / 棚卸ID / 出荷ID のいずれか（人が読む原因） |
+| `sourceReceiptId` / `sourcePutAwayTotal` | 文字列? / 非負整数? ＋**複合一意制約** | 起点の格納を指すドメインの自然キー。**P1 の二重計上の検出用**（[H42](decisions.md#h42-p1-の二重計上を検出する起点識別子)） |
 
 - **追記専用**。行を更新しないので `lastEventPosition` を持たない。
 - **検出用の列が要る理由（H30）**: `PlaceStock` だけは冪等にできないので、P1 が二重発火すると
@@ -1654,13 +1663,13 @@ WHERE locationId IN (?) AND frozen
 
 | 列 | 型 | 埋まる契機 |
 |---|---|---|
-| `stocktakeId` | PK1 | `StockCounted` |
-| `inventoryItemId` | PK2 | 〃 |
-| `skuId` / `locationId` | | 〃 |
-| `countedQuantity` | `Quantity` | 〃（**数え直しは同じキーを上書き**＝最新が正。H20） |
+| `stocktakeId` | PK1・文字列 | `StockCounted` |
+| `inventoryItemId` | PK2・文字列 | 〃 |
+| `skuId` / `locationId` | 文字列 | 〃 |
+| `countedQuantity` | 非負整数 | 〃（**数え直しは同じキーを上書き**＝最新が正。H20） |
 | `countedAt` | | 〃 |
-| `bookQuantity` | `Quantity?` | `StockAdjusted`。実地値 − 符号付き差分 で復元（H10） |
-| `variance` | 符号付き? | 〃。帳簿値 − 実地値 |
+| `bookQuantity` | 非負整数? | `StockAdjusted`。実地値 − 符号付き差分 で復元（H10） |
+| `variance` | 符号付き整数? | 〃。帳簿値 − 実地値 |
 | `adjustedAt` | | 〃 |
 | `lastEventPosition` | | |
 
@@ -1681,11 +1690,11 @@ WHERE locationId IN (?) AND frozen
 |---|---|---|
 | `interferenceId` | PK | 採番 |
 | `occurredAt` | | ポリシー（**非イベント**） |
-| `inventoryItemId` / `skuId` / `locationId` | | 〃 |
-| `blockedCommand` | enum | 〃。`PlaceStock` / `IssueStock` / `AdjustStock` |
-| `quantity` | | 〃。拒否されたコマンドの数量 |
-| `blockedByStocktakeId` | `StocktakeId` | 〃 |
-| `counted` | `boolean` | **`StockCounted` / `StocktakeClosed` 由来**（イベント）。その棚を数えたか |
+| `inventoryItemId` / `skuId` / `locationId` | 文字列 | 〃 |
+| `blockedCommand` | enum | 〃。`PlaceStock` / `IssueStock` / `AdjustStock`（**ビュー固有**） |
+| `quantity` | 非負整数 | 〃。拒否されたコマンドの数量 |
+| `blockedByStocktakeId` | 文字列 | 〃 |
+| `counted` | 真偽 | **`StockCounted` / `StocktakeClosed` 由来**（イベント）。その棚を数えたか |
 | `resolved` / `resolvedAt` | | **人が打つ**（非イベント）。再投入・破棄のどちらでも完了 |
 | `lastEventPosition` | | `counted` 列の更新にだけ効く |
 
