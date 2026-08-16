@@ -144,7 +144,7 @@ event-sourcing/
 ## 検証（各段のエンドツーエンド確認）
 - M3-a: REST で `ReceiveStock`→`AllocateStock`→`ShipStock` → プロジェクション照会 → `available=onHand-allocated` が保たれ `StockLedgerView` に全履歴が並ぶ。過剰引当/出荷が不変条件で弾かれる。
 - M3-c: 観測UI で 3-a の一連の操作をブラウザから行い、**1つのコマンドで複数のビューが同時に変わる**（引当を打つと引当可能在庫・引当・在庫元帳が動く）ことを目で確認する。CQRS の実感はここにしか無い（[H34](decisions.md#h34-観測用-ui-の位置づけ)）。
-- M3-b: `StartStocktake`→`CountStock`→`CloseStocktake` → 対象在庫が凍結・解凍され（サーガ P5）、差異ビューに帳簿値と実地値が並ぶ。**凍結中の格納/払出が拒否され、棚卸干渉ビューに行が積まれる**（[H22](decisions.md#h22-凍結中に拒否された在庫反映の行き先)）。
+- M3-b: `StartStocktake`→`CountStock`→`CloseStocktake` → 対象在庫が凍結・解凍され（棚卸凍結サーガ P5）、差異ビューに帳簿値と実地値が並ぶ。**凍結中の格納/払出が拒否され、棚卸干渉ビューに行が積まれる**（[H22](decisions.md#h22-凍結中に拒否された在庫反映の行き先)）。
 - M4: `docker compose up` → 同シナリオ → DynamoDB Localに `aggregateIdentifier/sequenceNumber` 行が追記され条件式で連番重複が拒否されること、Streams経由でPostgreSQL投影が更新されることを確認。
 - M5: 移行後、同RESTシナリオが5.x上で同結果になる回帰確認。差分を移行ドキュメントに反映。
 - M6: ウォレットで 付与→利用→失効、残高≥0違反の拒否、失効の時間駆動発火、会計負債ビューの整合を確認。

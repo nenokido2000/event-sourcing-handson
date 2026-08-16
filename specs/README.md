@@ -48,10 +48,10 @@ Spec 本体は**題材ごとのサブディレクトリ**に置く（この案�
 
 | ファイル | 対応するスライス | 中身 |
 |---|---|---|
-| [`warehouse/receiving.spec`](warehouse/receiving.spec) | M3-a | 入荷 → 格納 → 在庫計上（P1） |
+| [`warehouse/receiving.spec`](warehouse/receiving.spec) | M3-a | 入荷 → 格納 → 在庫計上（格納伝播 P1） |
 | [`warehouse/allocation.spec`](warehouse/allocation.spec) | M3-a ★コア | 受注 → 引当（P2）。**不変条件 引当可能 ≥ 0** |
-| [`warehouse/shipping.spec`](warehouse/shipping.spec) | M3-a | 出荷指示 → ピッキング → 払出（P3）→ 出荷／取消 → 引当解放（P6） |
-| [`warehouse/stocktaking.spec`](warehouse/stocktaking.spec) | M3-b | 棚卸開始 → 凍結（P5）→ カウント → 調整（P4）→ クローズ → 解凍 |
+| [`warehouse/shipping.spec`](warehouse/shipping.spec) | M3-a | 出荷指示 → ピッキング → 払出（出庫反映 P3）→ 出荷／取消 → 引当解放（P6） |
+| [`warehouse/stocktaking.spec`](warehouse/stocktaking.spec) | M3-b | 棚卸開始 → 凍結（棚卸凍結 P5）→ カウント → 調整（棚卸反映 P4）→ クローズ → 解凍 |
 
 ## 書式
 
