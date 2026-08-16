@@ -44,11 +44,14 @@ graph TB
 **共通の値オブジェクト**（`Sku` / `Quantity` / `QuantityDelta` / `LocationId` / `OrderLineId`）は、
 BC ごとに重複定義せず**全 BC で共有する1組**として持つ（[H39](decisions.md#h39-warehouse-domain-のパッケージ配置)）。
 実装上は `warehouse-domain` の `shared` パッケージ。顔ぶれの正は
-[`tactical-design.md`](tactical-design.md) の「共通の値オブジェクト」。
+[`tactical-design.md`](tactical-design.md) の「共有カーネル（`shared`）」。
 
 - 下の原則「BC をまたぐ直接依存を作らない」の**唯一の例外**にあたるため、ここに明示する。
   依存の向きは各 BC → 共有カーネルの一方向で、BC どうしが直接つながるわけではない。
-- **集約固有の識別子は共有しない**（`InventoryItemId` / `AllocationId` / `ReceiptId` 等は各 BC が持つ）。
+- **集約固有の識別子は共有しない**（[H43](decisions.md#h43-bc-をまたぐ識別子の帰属)）。
+  複合識別子（`InventoryItemId`）は自分の構造に使う BC だけが持ち、他の BC は上の素材のまま運んで
+  ポリシーが組み立てる。単一の識別子（`ReceiptId` / `StocktakeId`）は**同名別型**で各 BC が持つ。
+  顔ぶれは [`tactical-design.md`](tactical-design.md) の「BC ごとの識別子」。
 - 本 PoC が1チーム・1リポジトリで、同じ倉庫の SKU が BC ごとに違う意味を持たないことが前提。
   前提が崩れたら各 BC が自分の値オブジェクトを持つ形へ戻す。
 

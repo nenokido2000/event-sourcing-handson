@@ -233,22 +233,36 @@ flowchart TB
 
 ---
 
-## 共通の値オブジェクト
+## 値オブジェクト
 
 原始型の乱用を避ける（[`.claude/rules/ddd-ubiquitous-language.md`](../.claude/rules/ddd-ubiquitous-language.md)）。
+**共有カーネル（全 BC で1組）と、BC ごとに持つ識別子を分ける**（[H43](decisions.md#h43-bc-をまたぐ識別子の帰属)）。
+
+### 共有カーネル（`shared`）
+
+どの BC でも同じ意味を持つ概念。ここだけが BC をまたいで共有される
+（[`context-map.md`](context-map.md) の共有カーネル）。
 
 | 日本語 | 英名 | 中身 | 不変条件・振る舞い |
 |---|---|---|---|
 | SKU | `Sku` | 文字列 | 非空 |
 | ロケーション | `LocationId` | 文字列 | 非空 |
-| 在庫ID | `InventoryItemId` | `Sku` × `LocationId` | 複合。文字列化して集約識別子にする |
 | 数量 | `Quantity` | 非負整数 | `≥ 0`。加算・減算（負になるなら例外）・比較・`ZERO` |
 | 数量差分 | `QuantityDelta` | **符号付き**整数 | 棚卸調整の差分専用。増減の向きを持つ |
 | 注文明細ID | `OrderLineId` | 文字列 | 非空。受注BC（外部）が振る。倉庫は採番しない |
-| 引当ID | `AllocationId` | `OrderLineId` × `LocationId` | 引当1件を指す。**決定的に導出する**（採番しない。H26） |
-| 入荷ID | `ReceiptId` | 文字列 | 非空 |
-| 出荷ID | `ShipmentId` | 文字列 | 非空 |
-| 棚卸ID | `StocktakeId` | 文字列 | 非空 |
+
+### BC ごとの識別子
+
+**複合識別子は、自分の集約の構造（識別子・明細キー）に使う BC だけが持つ。単一の識別子は同名別型**
+（[H43](decisions.md#h43-bc-をまたぐ識別子の帰属)）。同名の型が2つの BC にあるのは正常で、区別はパッケージが与える。
+
+| 日本語 | 英名 | 中身 | 持つ BC |
+|---|---|---|---|
+| 在庫ID | `InventoryItemId` | `Sku` × `LocationId`（複合） | **在庫だけ**（集約識別子。他 BC は素材のまま持ち、ポリシーが組み立てる） |
+| 引当ID | `AllocationId` | `OrderLineId` × `LocationId`（複合） | **在庫・出荷**（両方が明細キーに使う）。**決定的に導出する**（採番しない。H26） |
+| 入荷ID | `ReceiptId` | 文字列・非空 | 入荷・**在庫**（`StockPlaced` の受入元） |
+| 棚卸ID | `StocktakeId` | 文字列・非空 | 棚卸・**在庫**（状態 `frozenBy` として照合に使う） |
+| 出荷ID | `ShipmentId` | 文字列・非空 | 出荷だけ |
 
 ```java
 public record Quantity(int value) {
@@ -677,8 +691,9 @@ enum ClosureReason { COMPLETED, DAMAGED, SHORTAGE }   // 全量格納 / 破損 /
 
 ### 在庫集約との接続（ポリシー P1）
 
-`StockPutAway` → **P1（格納伝播）** → `PlaceStock(InventoryItemId(sku, locationId), quantity, receiptId)`。
-1トランザクション1集約のため**結果整合**（H6）。
+`StockPutAway` → **P1（格納伝播）** → `PlaceStock(InventoryItemId.of(sku, locationId), quantity, receiptId, putAwayTotal)`。
+1トランザクション1集約のため**結果整合**（H6）。在庫IDを組み立てるのはポリシーで、入荷集約は
+`(Sku, LocationId)` までしか持たない（[H43](decisions.md#h43-bc-をまたぐ識別子の帰属)）。
 
 > **片落ち（決着済み）**: 格納先の在庫が**凍結中**だと `PlaceStock` は拒否され
 > （`InventoryFrozenException`）、入荷側は格納済みなのに在庫に反映されない**片落ち**が残る。
@@ -724,9 +739,10 @@ enum ClosureReason { COMPLETED, DAMAGED, SHORTAGE }   // 全量格納 / 破損 /
 Shipment
   id        : ShipmentId                 // 集約識別子
   lines     : Map<AllocationId, Line>    // 出荷明細（引当1件 = 明細1件）
-              Line { inventoryItemId : InventoryItemId
-                     allocatedQty    : Quantity     // 引当量（指示後は不変）
-                     pickedQty       : Quantity }   // ピッキング累計
+              Line { sku          : Sku          // 取り出し元（在庫IDは持たない。H43）
+                     locationId   : LocationId
+                     allocatedQty : Quantity     // 引当量（指示後は不変）
+                     pickedQty    : Quantity }   // ピッキング累計
   shipped   : boolean                    // 出荷済み（終端）
   cancelled : boolean                    // 取消済み（終端）
 
@@ -759,7 +775,7 @@ Shipment
 #### 1. 出荷を指示する（`RequestShipment`）— 起点: 外部トリガ（受注 / Ordering）
 
 ```java
-record ShipmentLine(AllocationId allocationId, InventoryItemId inventoryItemId, Quantity quantity)
+record ShipmentLine(AllocationId allocationId, Sku sku, LocationId locationId, Quantity quantity)
 
 record RequestShipment(ShipmentId shipmentId, List<ShipmentLine> lines)
 record ShipmentRequested(ShipmentId shipmentId, List<ShipmentLine> lines)
@@ -773,7 +789,10 @@ record ShipmentRequested(ShipmentId shipmentId, List<ShipmentLine> lines)
 
 - **明細はコマンドに載せて渡す**。集約が引当ビュー（`AllocationView`）を引くことはしない
   （[`.claude/rules/cqrs-projection.md`](../.claude/rules/cqrs-projection.md)。引当先の選定は P2 の責務で、
-  ここに来る時点で `(AllocationId, InventoryItemId, 数量)` は確定している）。
+  ここに来る時点で `(AllocationId, Sku, LocationId, 数量)` は確定している）。
+- **在庫IDではなく `(Sku, LocationId)` を持つ**（[H43](decisions.md#h43-bc-をまたぐ識別子の帰属)）。
+  出荷にとってこれは「どこから取るか」であって在庫集約の識別子ではなく、出荷集約はこの値で何も判断しない。
+  `InventoryItemId` を組み立てるのは P3・P6 の仕事（P1 が `sku` から組み立てるのと同型）。
 - **集約の誕生**: コンストラクタコマンド（入荷と同じく `ShipmentId` を外から与えられて1回だけ生まれる）。
   同一IDの二重指示はイベントストアの一意性制約で拒否される。
 - 状態遷移: 各明細を `allocatedQty = quantity` / `pickedQty = ZERO` で登録。`shipped = cancelled = false`
@@ -783,7 +802,7 @@ record ShipmentRequested(ShipmentId shipmentId, List<ShipmentLine> lines)
 ```java
 record PickStock(ShipmentId shipmentId, AllocationId allocationId, Quantity quantity)
 record StockPicked(ShipmentId shipmentId, AllocationId allocationId,
-                   InventoryItemId inventoryItemId, Quantity quantity, Quantity pickedTotal)
+                   Sku sku, LocationId locationId, Quantity quantity, Quantity pickedTotal)
 ```
 
 | 受付ゲート（拒否条件） | 例外 |
@@ -799,8 +818,9 @@ record StockPicked(ShipmentId shipmentId, AllocationId allocationId,
   [`decisions.md`](decisions.md#h15-ピッキングの完了条件) を参照。**
 - **明細1件（引当1件）単位**。まとめて送らないので、P3 は `StockPicked` 1件 → `IssueStock` 1件の
   単発伝播のままでいられる（P1 と対称）。
-- イベントに `inventoryItemId` を載せるのは、**P3 が出荷集約を引かずに `IssueStock` を組み立てられる**ようにするため
-  （P1 が `StockPutAway` に `sku` を載せたのと同じ理由）。
+- イベントに `sku` / `locationId` を載せるのは、**P3 が出荷集約を引かずに `IssueStock` を組み立てられる**ようにするため
+  （P1 が `StockPutAway` に `sku` を載せたのと同じ理由）。在庫IDはここでは組み立てない
+  （[H43](decisions.md#h43-bc-をまたぐ識別子の帰属)）。
 - **`pickedTotal`（ピッキング累計）も載せる**。P3 はこれをそのまま `IssueStock` に渡し、在庫集約が差分を出す。
   イベントが二重配信されても累計は同じ値なので、在庫が二重に減らない
   （[H30](decisions.md#h30-ポリシーの二重発火にどう備えるか)）。集約が既に持っている値を渡すだけで、新しい状態は要らない。
@@ -871,10 +891,12 @@ enum CancellationReason { ORDER_CANCELLED, EXPIRED }   // 注文取消 / 期限�
 ### 在庫集約との接続（ポリシー P3 / P6）
 
 ```
-StockPicked                  → P3（出庫反映）  → IssueStock(inventoryItemId, allocationId, pickedTotal)
+StockPicked                  → P3（出庫反映）  → IssueStock(InventoryItemId.of(sku, locationId), allocationId, pickedTotal)
 StockShipped(未出荷残あり)    → P6（引当解放）  → DeallocateStock(..., SHORT_SHIPPED)   × 残明細
 ShipmentCancelled            → P6（引当解放）  → DeallocateStock(..., 取消理由を写像)   × 全明細
 ```
+
+**在庫IDを組み立てるのはポリシー**（[H43](decisions.md#h43-bc-をまたぐ識別子の帰属)）。出荷集約は `(Sku, LocationId)` までしか持たない。
 
 **P6 は出荷スライスで新規に見つかったポリシー**（H17）。放置すると在庫側の引当済が減らず
 **引当可能が永久に目減りする**ため必要になった。P6 は残明細の数だけコマンドを送る **1:N** だが、
@@ -990,13 +1012,13 @@ record StocktakeStarted(StocktakeId stocktakeId, Set<LocationId> locations)
 ```
 
 ```java
-record CountStock(StocktakeId stocktakeId, InventoryItemId inventoryItemId, Quantity countedQuantity)
-record StockCounted(StocktakeId stocktakeId, InventoryItemId inventoryItemId, Quantity countedQuantity)
+record CountStock(StocktakeId stocktakeId, Sku sku, LocationId locationId, Quantity countedQuantity)
+record StockCounted(StocktakeId stocktakeId, Sku sku, LocationId locationId, Quantity countedQuantity)
 ```
 
 | 受付ゲート（拒否条件） | 例外 |
 |---|---|
-| **対象ロケーション外**（`inventoryItemId.locationId ∉ locations`） | **`LocationNotInStocktakeException`** ← 不変条件 |
+| **対象ロケーション外**（`locationId ∉ locations`） | **`LocationNotInStocktakeException`** ← 不変条件 |
 | クローズ済み | `StocktakeClosedException` |
 
 - **数量ゼロを許す**。①②③では数量ゼロを `InvalidQuantityException` で拒否したが、ここだけ逆になる。
@@ -1004,6 +1026,9 @@ record StockCounted(StocktakeId stocktakeId, InventoryItemId inventoryItemId, Qu
   帳簿にある物が消えているという最も重要な発見**にあたる。
 - **帳簿に無い SKU も数えられる**（H18。母集合を持たないので拒否する材料が無く、そもそも拒否すべきでない）。
   受け側の在庫集約は `AdjustStock` で**誕生する**（H19）。
+- **在庫IDを持たず `(Sku, LocationId)` で受ける**（[H43](decisions.md#h43-bc-をまたぐ識別子の帰属)）。
+  母集合を持たない棚卸は**在庫集約の存在を前提にしない**（帳簿に無い SKU も数える）ので、
+  数える対象は「棚とSKU」であって在庫集約の識別子ではない。組み立てるのは P4。
 - **数え直し（同じ対象を2回数える）を拒否しない**（H20）。最新の実地値が正で、在庫側は実地値（絶対値）を
   受けるので自然に収束する（42 → 45 と届けば 45 に落ち着く）。イベントは2本とも残る（2回数えたのは事実）。
 - **状態遷移: なし**（下記）。
@@ -1066,9 +1091,14 @@ enum StocktakeClosureReason { COMPLETED, ABORTED }   // 数え終えた / 中断
 
 ```
 StocktakeStarted  → P5（棚卸凍結）→ FreezeStock(inventoryItemId, stocktakeId)                  × 対象在庫の数
-StockCounted      → P4（棚卸反映）→ AdjustStock(inventoryItemId, countedQuantity, stocktakeId)  × 1
+StockCounted      → P4（棚卸反映）→ AdjustStock(InventoryItemId.of(sku, locationId),
+                                               countedQuantity, stocktakeId)                  × 1
 StocktakeClosed   → P5（棚卸凍結）→ UnfreezeStock(inventoryItemId, stocktakeId)                × 対象在庫の数
 ```
+
+**P4 が在庫IDを組み立てる**（棚卸集約は `(Sku, LocationId)` までしか持たない。
+[H43](decisions.md#h43-bc-をまたぐ識別子の帰属)）。P5 は引当可能在庫ビューの `skuId` / `locationId` 列から得るので変わらない。
+`stocktakeId` は在庫 BC の同名別型へ写像する。
 
 - **P4 はカウントごとの即時伝播**（1イベント → 1コマンド。P1・P3 と同型）。**クローズ時の一括ではない**。
   一括（完了＝コミット／中断＝ロールバック）を却下した理由は
@@ -1116,12 +1146,16 @@ StocktakeClosed   → P5（棚卸凍結）→ UnfreezeStock(inventoryItemId, sto
 
 | | 受けるイベント（発行元） | 送るコマンド（宛先） | 冪等か |
 |---|---|---|---|
-| **P1** 格納伝播（`PutawayPolicy`） | `StockPutAway`（入荷） | `PlaceStock(InventoryItemId(sku, locationId), quantity, receiptId, putAwayTotal)`（在庫） | **✕**（H30） |
-| **P3** 出庫反映（`FulfillmentPolicy`） | `StockPicked`（出荷） | `IssueStock(inventoryItemId, allocationId, pickedTotal)`（在庫） | ○（H30） |
-| **P4** 棚卸反映（`StocktakePolicy`） | `StockCounted`（棚卸） | `AdjustStock(inventoryItemId, countedQuantity, stocktakeId)`（在庫） | ○（H10 の絶対値） |
+| **P1** 格納伝播（`PutawayPolicy`） | `StockPutAway`（入荷） | `PlaceStock(InventoryItemId.of(sku, locationId), quantity, receiptId, putAwayTotal)`（在庫） | **✕**（H30） |
+| **P3** 出庫反映（`FulfillmentPolicy`） | `StockPicked`（出荷） | `IssueStock(InventoryItemId.of(sku, locationId), allocationId, pickedTotal)`（在庫） | ○（H30） |
+| **P4** 棚卸反映（`StocktakePolicy`） | `StockCounted`（棚卸） | `AdjustStock(InventoryItemId.of(sku, locationId), countedQuantity, stocktakeId)`（在庫） | ○（H10 の絶対値） |
 
 - **どれも他集約・リードモデルを引かない**。組み立てに要る値はイベントに載っている
-  （P1 の `sku` と `putAwayTotal`／P3 の `inventoryItemId` と `pickedTotal`）。ポリシーが読みに行くのは P2（引当先の選定）だけ。
+  （P1 の `sku` と `putAwayTotal`／P3 の `sku` `locationId` と `pickedTotal`）。ポリシーが読みに行くのは P2（引当先の選定）だけ。
+- **3本とも在庫IDを組み立てる**（[H43](decisions.md#h43-bc-をまたぐ識別子の帰属)）。複合識別子を持つのは在庫 BC だけで、
+  発行元の BC は素材（`Sku` / `LocationId`）のまま渡す。**BC をまたぐ写像はポリシーの責務**という
+  [H17](decisions.md#h17-宙に浮いた引当を誰が解放するか) の形（P6 の語彙の写像）が、識別子にも及んでいる。
+  P4 は `stocktakeId` も在庫 BC の同名別型へ写像する。
 - **P4 はカウントごとの即時伝播**（クローズ時の一括ではない。[H20](decisions.md#h20-カウントを在庫へ伝えるタイミング)）。
 - 3本とも**入口（格納）・出口（払出）・訂正（調整）で同じ形**をしている。集約をまたぐ整合を
   イベント＋ポリシーで結果整合にする（[H6](decisions.md#h6-受入在庫の集約帰属)）ことの、いちばん素直な現れ。
@@ -1328,8 +1362,8 @@ P2 は**三重に守られている**ので、`OrderAccepted` を2回処理し�
 ### 入力と出力
 
 ```
-StockShipped(未出荷残あり)  → DeallocateStock(inventoryItemId, allocationId, SHORT_SHIPPED)  × 未出荷明細
-ShipmentCancelled          → DeallocateStock(inventoryItemId, allocationId, 取消理由の写像)   × 取消明細（＝全明細）
+StockShipped(未出荷残あり)  → DeallocateStock(InventoryItemId.of(sku, locationId), allocationId, SHORT_SHIPPED)  × 未出荷明細
+ShipmentCancelled          → DeallocateStock(InventoryItemId.of(sku, locationId), allocationId, 取消理由の写像)   × 取消明細（＝全明細）
 ```
 
 - 全量出荷（`COMPLETE`）では**何も送らない**。引当は払出で消化済み。
@@ -1355,6 +1389,10 @@ ShipmentCancelled          → DeallocateStock(inventoryItemId, allocationId, �
 同名に見える2行も**別の enum**である点は崩さない。集約は自分の言葉だけを持ち、
 翻訳の責任はポリシーが引き受ける（[`ddd-ubiquitous-language.md`](../.claude/rules/ddd-ubiquitous-language.md) の
 BC をまたぐ直接依存を作らない、の具体形）。
+
+**識別子も同じ扱い**（[H43](decisions.md#h43-bc-をまたぐ識別子の帰属)）。出荷明細が持つ `(Sku, LocationId)` から
+`InventoryItemId` を組み立てるのは P6 の仕事で、`AllocationId` は出荷 BC の型から在庫 BC の同名別型へ写像する。
+**enum の写像と識別子の写像が同じ場所に並ぶ**のが、BC 境界がここにあることの現れ。
 
 ### 失敗と二重発火
 

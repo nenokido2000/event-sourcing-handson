@@ -59,6 +59,7 @@
 | [H40](#h40-値オブジェクトの-json-表現) | 値オブジェクトの JSON 表現 | `@JsonValue` で平坦化する（複合IDは文字列表現で1個） | 確定 | 2026-08-15 |
 | [H41](#h41-リードモデルの顔ぶれを絞った基準) | リードモデルの顔ぶれを絞った基準 | 読み手がいるものだけ実装する（ピックリストビューは引当ビューに包含） | 確定 | 2026-08-15 |
 | [H42](#h42-p1-の二重計上を検出する起点識別子) | P1 の二重計上を検出する起点識別子 | ドメインの自然キー `(入荷ID, 格納累計)` を運ぶ（Axon の相関データを使わない） | 確定 | 2026-08-16 |
+| [H43](#h43-bc-をまたぐ識別子の帰属) | BC をまたぐ識別子の帰属 | 複合IDは構造に使う BC だけが持ち、単一IDは同名別型（共有カーネルは広げない） | 確定 | 2026-08-16 |
 
 **保留・暫定の扱い**: H5 は M3+ の改修シナリオ候補として温存（分析には現れるが M3 の最初のスライスには入れない）。
 H11 は実績データがないための**暫定**であり、見直しの前提が明記されている（下記参照）。
@@ -2445,6 +2446,123 @@ P1 経由でないイベントでは両方 null（一意制約は null を重複
   そこに乗らない**。M5（4.x→5.x）でメタデータ API が変わっても影響を受けない。
 - 受入 Spec は**変更なし**。`receiving.spec` は元帳の行の並びしか見ておらず、検出は内側のテスト
   （[`tactical-design.md`](tactical-design.md) のリードモデルのテスト骨子9）で押さえる。
+
+---
+
+## H43 BC をまたぐ識別子の帰属
+
+**状態**: 確定（2026-08-16 / M3-a 着手前の全体ウォークスルーで検出）
+
+### 文脈
+
+[H39](#h39-warehouse-domain-のパッケージ配置) は集約固有の識別子を BC 直下に置き、却下理由にこう書いた——
+「`InventoryItemId` / `AllocationId` は在庫 BC の概念で、**他 BC が組み立てるものではない**」。
+
+**組み立てるのは確かに持ち主の BC だった。しかし受け取って保持するのは他の BC だった。**
+
+| 識別子 | 持ち主 | またいでいる先（型として現れる場所） |
+|---|---|---|
+| `InventoryItemId` | 在庫 | 出荷（`ShipmentLine` / `StockPicked`）、棚卸（`CountStock` / `StockCounted`） |
+| `AllocationId` | 在庫 | 出荷（`ShipmentLine` / `PickStock` / `StockPicked`） |
+| `ReceiptId` | 入荷 | **在庫**（`PlaceStock` / `StockPlaced`） |
+| `StocktakeId` | 棚卸 | **在庫**（`AdjustStock` / `FreezeStock` / `UnfreezeStock` / `StockFrozen` / `StockUnfrozen`、状態 `frozenBy`） |
+| `ShipmentId` | 出荷 | またいでいない |
+
+依存の向きを引くと**在庫と棚卸が相互参照**になり（在庫が `StocktakeId` を、棚卸が `InventoryItemId` を受け取る）、
+ドメインの中心にパッケージの循環ができる。向きも場所ごとにバラバラで、
+[`context-map.md`](context-map.md) の関係図（すべて → 在庫）とも一致しない。
+
+```
+出荷 ──→ 在庫 ──→ 入荷
+           ⇅
+          棚卸
+```
+
+`warehouse-domain` は1モジュールなのでコンパイルは通るが、
+[`ddd-ubiquitous-language.md`](../.claude/rules/ddd-ubiquitous-language.md) の
+「**BC をまたぐ直接依存を作らない**」（例外は共有カーネルのみ）に実態が反している。
+
+### 決定
+
+**規則を2つ立て、実態をルールに合わせる（ルールを緩めない）。**
+
+> **① 複合識別子は、自分の集約の構造（識別子・明細キー・不変条件）に使う BC だけが持つ。**
+> **他の BC は共有カーネルの素材で運び、ポリシーが組み立てる。**
+>
+> **② 単一の識別子は、その BC で意味が変わらないなら同名別型で各 BC が持つ**（原始型には落とさない）。
+
+| 識別子 | 種別 | 持つ BC |
+|---|---|---|
+| `InventoryItemId`（`Sku` × `LocationId`） | 複合 | **在庫だけ**（集約識別子） |
+| `AllocationId`（`OrderLineId` × `LocationId`） | 複合 | **在庫と出荷**（両方が明細キーとして構造に使う） |
+| `ReceiptId` | 単一 | 入荷 ＋ 在庫（同名別型） |
+| `StocktakeId` | 単一 | 棚卸 ＋ 在庫（同名別型） |
+| `ShipmentId` | 単一 | 出荷だけ |
+
+**共有カーネルは広げない**（`Sku` / `Quantity` / `QuantityDelta` / `LocationId` / `OrderLineId` のまま）。
+依存は全 BC → 共有カーネルの一方向になり、循環も BC 間の直接依存も消える。
+
+規則①が効くのは、**複合識別子の素材がすべて共有カーネルにある**ため。出荷・棚卸は
+`(Sku, LocationId)` を素のまま持ち、`InventoryItemId` は P3・P4・P6 が組み立てる——
+**P1 が `StockPutAway` の `sku` から組み立てているのと同型**になる。
+
+規則②の「意味が変わらないなら同名」は、[`ubiquitous-language.md`](ubiquitous-language.md) が
+「BC と集約が同名になるのは正常（区別は種別語で行う）」と既に採っている考え方と同じ。
+在庫にとっての `ReceiptId` は「入荷の識別子」で、入荷 BC での意味と変わらない。
+役割の違いはフィールド名が表す（`frozenBy : StocktakeId`）。
+
+### 検討した選択肢と却下理由
+
+- **却下: またいでいる識別子を共有カーネルへ移す**。循環は消え、変換も要らない最も手軽な案。
+  却下したのは、5つのうち4つが移って**BC 直下に残るのが集約クラスだけになる**ため。
+  共有カーネルは「**どの BC でも同じ意味を持つ概念**」（SKU・数量）の置き場であって、
+  「またぐから置く」置き場ではない。**BC が何を所有しているかが型から読めなくなる**のは、
+  [H39](#h39-warehouse-domain-のパッケージ配置) が第一階層を BC にした狙いを裏返しにする。
+- **却下: 原則の側に但し書きを足す**（「BC をまたぐ直接依存を作らない（識別子による参照は除く）」）。
+  変更が文書だけで済み、[`aggregate-design.md`](../.claude/rules/aggregate-design.md) の
+  「他集約は識別子（ID）で参照する」とも整合する。却下したのは、**ルールが実態に譲る**形になるため。
+  循環も残る。ステアリングを持っている意味が薄れる。
+- **却下: BC ごとに全部の識別子型を複製する**（DDD の正道）。独立性は最も高いが、
+  `Sku` / `Quantity` まで複製することになり、[H39](#h39-warehouse-domain-のパッケージ配置) が
+  共有カーネルを作った前提（1チーム・1リポジトリ、同じ倉庫の SKU が BC ごとに違う意味を持たない）は
+  **今も崩れていない**。崩れたのは複合識別子のところだけなので、そこだけ直すのが精確。
+- **却下: BC 間の受け渡しを原始型（`String`）で行う**。
+  [`ddd-ubiquitous-language.md`](../.claude/rules/ddd-ubiquitous-language.md) の「原始型の乱用を避ける」に反する。
+- **却下: 在庫側で「変動の原因」を表す1つの型に畳む**（元帳ビューの `cause` 列と同じ発想で
+  `ReceiptId` / `StocktakeId` / `AllocationId` を1つに）。`StocktakeId` は `frozenBy` として
+  **受付ゲートの照合に使う**ので、「原因」とは別の役割を持つ。畳むと在庫の不変条件が表現できなくなる。
+
+### 帰結
+
+- **[H39](#h39-warehouse-domain-のパッケージ配置) のパッケージ配置は維持**（第一階層は BC、その中を `command` / `event`、共通の値オブジェクトは `shared`）。
+  変わるのは**各 BC が持つ識別子の顔ぶれ**だけ。H39 の「集約固有の識別子は BC 直下」も維持で、
+  そこに「他 BC のものでも、自分が構造に使うなら自分の型として持つ」が加わる。
+- **型が変わる**（M3-a を書く前なので実装への手戻りはない）。
+
+  | 変更前 | 変更後 |
+  |---|---|
+  | `ShipmentLine(AllocationId, InventoryItemId, Quantity)` | `ShipmentLine(AllocationId, Sku, LocationId, Quantity)` |
+  | `StockPicked(ShipmentId, AllocationId, InventoryItemId, Quantity, Quantity)` | `StockPicked(ShipmentId, AllocationId, Sku, LocationId, Quantity, Quantity)` |
+  | `CountStock(StocktakeId, InventoryItemId, Quantity)` | `CountStock(StocktakeId, Sku, LocationId, Quantity)` |
+  | `StockCounted(StocktakeId, InventoryItemId, Quantity)` | `StockCounted(StocktakeId, Sku, LocationId, Quantity)` |
+
+  出荷集約の明細も `Line { sku, locationId, allocatedQty, pickedQty }` になる。
+- **P3・P4・P6 が `InventoryItemId` を組み立てる**。ポリシー（`warehouse-command`）は BC をまたぐのが責務なので、
+  ここで両方の BC の型に触れてよい（[H17](#h17-宙に浮いた引当を誰が解放するか) で
+  「BC をまたぐ語彙の写像はポリシーの責務」と決めているのと同じ）。**P5 は変わらない**
+  （引当可能在庫ビューの `skuId` / `locationId` 列から組み立てる）。
+- **棚卸が [H18](#h18-棚卸は数える対象の母集合を持つか) と整合する**。母集合を持たず帳簿に無い SKU も数える棚卸が、
+  在庫集約の識別子を型として持っているのは噛み合っていなかった。棚が数えるのは「棚とSKU」であって在庫集約ではない。
+  **分離しようとして設計の粗が1つ見つかった**形で、この決定の副産物にあたる。
+- **同名別型は同じファイルで import できない**（`inventory.StocktakeId` と `stocktaking.StocktakeId`）。
+  P4・P5 は片方を完全修飾する。[H40](#h40-値オブジェクトの-json-表現) で全ての値オブジェクトが文字列に畳めるので、
+  変換は `inventory.StocktakeId.of(e.stocktakeId().value())` の1行で済む。
+  **イベントの JSON 表現は変わらない**ので、M3+ のアップキャスタ・M4 の自作ストアにも影響しない。
+- **[`context-map.md`](context-map.md) の共有カーネル節を直す**。「顔ぶれの正は
+  [`tactical-design.md`](tactical-design.md) の『共通の値オブジェクト』」とリンクしていたが、
+  その表には集約固有の識別子も並んでいて、context-map 自身の記述（集約固有の識別子は共有しない）より広かった。
+  **表を「共有カーネル」と「BC ごとの識別子」に分ける。**
+- **受入 Spec は変更なし**。`specs/` はステップの引数を文字列で書いており、型の帰属に触れていない。
 
 ---
 
