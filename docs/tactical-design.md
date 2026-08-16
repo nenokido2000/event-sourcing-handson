@@ -429,7 +429,7 @@ record StockAllocated(InventoryItemId inventoryItemId, AllocationId allocationId
   → [`decisions.md`](decisions.md#h26-引当が途中で失敗したときの立て直し)
 - 状態遷移: `allocations.put(allocationId, Line(allocatedQty = quantity, issuedQty = ZERO))`
 
-#### 3. 引当を解除する（`DeallocateStock`）— 起点: 取消・期限切れ
+#### 3. 引当を解除する（`DeallocateStock`）— 起点: ポリシー P6（引当解放）
 
 ```java
 record DeallocateStock(InventoryItemId inventoryItemId, AllocationId allocationId, DeallocationReason reason)
@@ -862,7 +862,7 @@ enum ShipmentCompletion { COMPLETE, SHORTAGE }   // 全量出荷 / 欠品を残�
   `ShipmentLine`（数量1つ）は出荷指示と取消で使う——そちらは**全明細が未ピッキング**なので引当量だけで足りる。
 - 状態遷移: `shipped = true`
 
-#### 4. 出荷を取り消す（`CancelShipment`）— 起点: 外部トリガ（注文取消）・タイマー（期限切れ）
+#### 4. 出荷を取り消す（`CancelShipment`）— 起点: 外部トリガ（注文取消・期限切れ）
 
 ```java
 record CancelShipment(ShipmentId shipmentId, CancellationReason reason)
@@ -880,6 +880,8 @@ enum CancellationReason { ORDER_CANCELLED, EXPIRED }   // 注文取消 / 期限�
   これは H5（ロケーション間の在庫移動）と同型の未導入概念なので**M3+ の改修シナリオ候補**へ送る。
   現時点では「取れる分を出荷して `SHORTAGE` で閉じる」経路がある。
 - `cancelledLines` は**全明細**（まだ1件も消化していないため）。P6 がこれを見て引当を解放する。
+- **期限切れ（`EXPIRED`）も外部から届く**（[H45](decisions.md#h45-期限切れを誰が判定するか)）。倉庫側にタイマーは無い——
+  引当明細も出荷明細も期限を持たないので判定の材料が無く、注文のライフサイクルは受注 BC の持ち物（H24）。
 - 状態遷移: `cancelled = true`
 
 ### 例外一覧
