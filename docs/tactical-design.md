@@ -410,8 +410,9 @@ record StockPlaced(InventoryItemId inventoryItemId, Quantity quantity,
 | 数量がゼロ | `InvalidQuantityException` |
 | 凍結中 | `InventoryFrozenException` |
 
-- **集約の誕生**: `@CreationPolicy(CREATE_IF_MISSING)`。その棚マスに初めて物が入った瞬間に集約が生まれる
+- **集約の誕生（1つ目の経路）**: `@CreationPolicy(CREATE_IF_MISSING)`。その棚マスに初めて物が入った瞬間に集約が生まれる
   （分析の「格納で誕生」に忠実。棚マスタ登録という概念をドメインに増やさない）。
+  もう1つの経路は `AdjustStock`（[H19](decisions.md#h19-棚卸で見つかった未登録在庫)）。
 - **`putAwayTotal`（格納累計）を運ぶ理由**: `(receiptId, putAwayTotal)` が起点の `StockPutAway` を一意に指すので、
   在庫元帳ビューがこれを複合一意制約で受けて**P1 の二重計上を検出できる**（[H42](decisions.md#h42-p1-の二重計上を検出する起点識別子)）。
   集約はこの値を**判断に使わない**（受付ゲートに現れない）——下流へ運ぶためだけに通す。
@@ -512,6 +513,13 @@ record StockAdjusted(InventoryItemId inventoryItemId, QuantityDelta delta,
 |---|---|
 | 別の棚卸が凍結中（`凍結中 かつ frozenBy ≠ stocktakeId`） | `NotFrozenByThisStocktakeException` |
 
+- **集約の誕生（2つ目の経路）**: `@CreationPolicy(CREATE_IF_MISSING)`。棚卸は母集合を持たず
+  **帳簿に無い SKU も数える**ので（[H18](decisions.md#h18-棚卸は数える対象の母集合を持つか)）、調整の宛先が存在しないことがある。
+  在庫集約の誕生は `PlaceStock`（初めて物が**入った**瞬間）と合わせて2経路になり、
+  こちらは**初めて物が「在る」と分かった瞬間**（[H19](decisions.md#h19-棚卸で見つかった未登録在庫)）。
+  - **未確認**: 未登録の在庫を**実地値ゼロ**で数えると、集約は作られるのに**差分ゼロでイベントが1本も出ない**
+    （下記）。ドメイン上は正しい（何も無い棚に何も無かった＝何も起きていない）が、
+    Axon 4 が空のストリームをどう扱うかは M3-b で実測する。
 - **数量については拒否条件を持たない**のがこのコマンドの特徴。凍結中でも通し、引当可能が負になっても通す。
 - 拒否するのは**呼び出し元の正当性**のみ（他の棚卸が凍結中の棚＝同じ棚を2つの棚卸が同時に触っている）。
   **凍結されていない場合は通す**（凍結漏れを理由に数えた事実を捨てない）。
