@@ -30,6 +30,8 @@ assertj-core = { module = "org.assertj:assertj-core" }
 # 受入テスト（版はこのファイルが正 / H37）
 gauge-java = { module = "com.thoughtworks.gauge:gauge-java", version.ref = "gaugeJava" }
 playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright" }
+# 受入ステップがリードモデルの応答を読むため。版は spring-boot-dependencies が管理
+gson = { module = "com.google.code.gson:gson" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
