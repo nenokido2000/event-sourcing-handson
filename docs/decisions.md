@@ -2023,8 +2023,8 @@ Gradle に `latest.release` を解決させて実測し直した。プラグイ�
 
 | 決めたこと | 内容 |
 |---|---|
-| Spec の置き場 | **動かさない**（リポジトリルートの `specs/`）。~~プラグイン側を `specsDir = "../specs"` で合わせる~~ → **環境変数 `gauge_specs_dir` で指す**（下の改訂） |
-| Gauge のプロジェクトファイル | `manifest.json` / `env/default/*.properties` は `warehouse-atdd/` に置く（gauge の実行ディレクトリ） |
+| Spec の置き場 | **動かさない**（リポジトリルートの `specs/`）。~~プラグイン側を `specsDir = "../specs"` で合わせる~~ → ~~環境変数 `gauge_specs_dir` で指す~~ → **位置引数 `specs/warehouse` で指す**（下の再改訂） |
+| Gauge のプロジェクトファイル | ~~`manifest.json` / `env/default/*.properties` は `warehouse-atdd/` に置く~~ → **リポジトリルートに置く**（下の[再改訂](#再改訂-gauge-プロジェクトをルートへ2026-08-26)） |
 | タスクの繋ぎ方 | **`check` / `test` には繋がない**。アプリ起動が要るため、明示的に呼ぶときだけ動く |
 | アプリの起動 | **手動起動が前提**（別端末で `bootRun`）。Spec 側はベース URL を環境変数で受ける（既定 `http://localhost:8080`） |
 | ブラウザ | 使わない（`APIRequestContext` のみ）。ブラウザのダウンロードは抑止する（Java 版は `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`。実際に効くかは1本目で確認する） |
@@ -2095,6 +2095,39 @@ Gradle に `latest.release` を解決させて実測し直した。プラグイ�
   `ParseError` になっていた。`gauge_specs_dir` を `specs/warehouse` に向けて解消した。
   README は `specs/` 直下に残る（[H31](#h31-受入シナリオの置き場と粒度) の「`specs/` に受入仕様一式」は保たれる）。
   第2弾のポイントウォレット（M6）は `specs/wallet/` に置けるので、題材が増えても同じ形で足せる。
+
+### 再改訂: Gauge プロジェクトをルートへ（2026-08-26）
+
+**`gauge_specs_dir` の回避策そのものが不要だった。** 1本目のステップ実装を書いた時点で、
+IntelliJ の Gauge プラグインが `@Step` を「プレースホルダ0個」と誤検出することに気づいた
+（`パラメーター数の不一致 (0 が必要ですが、3 が見つかりました)`）。Gauge 本体は正しく解釈しており
+——`gauge validate` が実装済みと判定し、実行時もメソッド本体まで到達する——**IDE 側だけの誤検出**だが、
+clone した人が全員同じものを踏む。
+
+原因は**配置**にあると見た。Gauge プロジェクト（`manifest.json` / `env/`）が `warehouse-atdd/` にあるのに
+Spec がその外（ルートの `specs/`）にあり、プラグインから見て Gauge プロジェクトとして成立していない。
+**上の改訂の `gauge_specs_dir` は、この歪んだ配置を外から補正するための回避策だった。**
+
+そこで逆に、**Gauge プロジェクトのほうをルートへ移す**と、`specs/` が自然にプロジェクト内に収まる。
+移す前に実測して確かめた:
+
+| 試したこと | 結果 |
+|---|---|
+| ルートに `manifest.json` + `env/` を置いて `gauge validate --env default specs/warehouse` | **成功**。`gauge_specs_dir` なしで位置引数が効く |
+| 同じ形で `gauge run --tags harness specs/warehouse` | **成功**（受入 Spec は Red のまま＝1本目の期待どおり） |
+| `gauge list --scenarios specs/warehouse` | **成功**。クラスパスを渡さなくても引ける |
+
+- `manifest.json` / `env/` を**リポジトリルート**へ移す。`Exec` タスクの `workingDir` もルートにし、
+  **`gauge_specs_dir` の環境変数を廃止**して位置引数 `specs/warehouse` を渡す。
+  **渡す環境変数は `gauge_custom_classpath` だけ**になった（Gradle が組んだクラスパスは渡すしかない）。
+- **副産物: clone した人がルートで素の `gauge run --env default specs/warehouse` を実行できる**
+  （クラスパスさえ渡せば Gradle を介さずに動く）。回避策を消した結果、標準の Gauge プロジェクトに戻った。
+- `logs` / `reports` はルート直下に生まれてしまうので、`logs_directory` / `gauge_reports_dir` を
+  `warehouse-atdd/` 配下へ向ける。Gauge の内部ディレクトリ `.gauge/` はルートに出るため `.gitignore` に足す。
+- **IDE の誤検出は消えた**（2026-08-26 に確認）。配置が原因という見立ては当たっていた。
+  なお**直し方として IDE の設定ファイルを追跡する案は採らなかった**——インスペクションを切る設定を
+  `.idea/` に置けば手元では消せるが、**特定の IDE を使う前提をリポジトリに焼き付ける**ことになる。
+  直すべきは配置のほうで、結果として IDE に依存しない形（素の CLI でも動く標準構成）に収まった。
 
 ---
 

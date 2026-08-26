@@ -13,13 +13,13 @@ dependencies {
     testImplementation(libs.gauge.java)
     testImplementation(libs.playwright)
     testImplementation(libs.assertj.core)
+    testImplementation(libs.gson)
 }
 
-// Gauge CLI を直接起動する。H37 では `org.gauge` プラグインを借りる決定だったが、
-// Gauge 1.6.35 は spec ディレクトリをプロジェクト配下に限定しており（`..` を含む位置引数は
-// 切り詰められ、ディレクトリのシンボリックリンクも辿らない）、リポジトリルートの specs/ を指せなかった。
-// プラグインの実体は「gauge を起動して gauge_custom_classpath を渡す」薄いラッパーなので、
-// H37 の却下案どおり自前の Exec に落とす。spec の置き場は環境変数 gauge_specs_dir なら効く（実測）。
+// Gauge CLI を直接起動する（`org.gauge` プラグインは使わない / H37 の改訂）。
+//
+// Gauge プロジェクト（manifest.json / env/）はリポジトリルートに置く。ルートを起点にすれば
+// specs/ がプロジェクト内に収まり、位置引数がそのまま効く。渡すのは Gradle が組んだクラスパスだけ。
 fun Exec.gaugeCommand(gaugeSubcommand: String) {
     group = "verification"
     dependsOn(tasks.testClasses)
@@ -27,12 +27,12 @@ fun Exec.gaugeCommand(gaugeSubcommand: String) {
     val stepClasspath = sourceSets["test"].runtimeClasspath
     // Gauge はディレクトリ配下の .spec / .md をすべて Spec として解析するため、
     // 案内文書（specs/README.md）と同じ階層を指すと ParseError になる。題材ごとの
-    // サブディレクトリを指し、README は specs/ 直下に残す（docs/decisions.md H37 の改訂）。
-    val specs = rootProject.layout.projectDirectory.dir("specs/warehouse").asFile
+    // サブディレクトリを指し、README は specs/ 直下に残す。
+    val specsDir = "specs/warehouse"
 
     inputs.files(stepClasspath)
-    inputs.dir(specs)
-    workingDir = projectDir
+    inputs.dir(rootProject.layout.projectDirectory.dir(specsDir))
+    workingDir = rootProject.layout.projectDirectory.asFile
     commandLine(buildList {
         add("gauge")
         add(gaugeSubcommand)
@@ -40,11 +40,11 @@ fun Exec.gaugeCommand(gaugeSubcommand: String) {
         add("default")
         // 実行するシナリオを絞る: ./gradlew :warehouse-atdd:gauge -Ptags=harness
         (project.findProperty("tags") as String?)?.let { add("--tags"); add(it) }
+        add(specsDir)
     })
     doFirst {
         // ステップ実装は test ソースセット。Gradle が組んだクラスパスを Gauge へ渡す
         environment("gauge_custom_classpath", stepClasspath.asPath)
-        environment("gauge_specs_dir", specs.absolutePath)
     }
 }
 

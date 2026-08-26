@@ -32,10 +32,12 @@ bin/
 .claude/settings.local.json
 
 # === Gauge（受入テストの実行成果物。Spec とステップ実装は追跡する）===
+# Gauge プロジェクトはリポジトリルート（manifest.json / env/）。logs と reports は
+# env/default/default.properties で warehouse-atdd/ 配下へ寄せてある
 warehouse-atdd/reports/
 warehouse-atdd/logs/
-warehouse-atdd/.gauge/
-warehouse-atdd/gauge_bin/
+/.gauge/
+/gauge_bin/
 
 # === LocalStack / infra 実行時データ ===
 .localstack/
