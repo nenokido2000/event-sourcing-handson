@@ -27,4 +27,4 @@ Axon の集約を規約準拠で追加する手順。既存の集約(あれば `
 
 6. 生成後、`./gradlew compileJava compileTestJava test` を実行して型エラー・テスト失敗がないことを確認する。
 
-7. **コミット前に `es-domain-reviewer` を run_in_background:false で実行**し、ルール準拠(REVIEW_VERDICT: PASS)を確認する。
+7. **コミット前に `es-domain-reviewer` を実行**し、結果を受け取ってルール準拠(REVIEW_VERDICT: PASS)を確認する(非同期で起動したら `TaskOutput` で回収する)。

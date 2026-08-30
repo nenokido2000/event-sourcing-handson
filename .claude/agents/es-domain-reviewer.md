@@ -1,6 +1,6 @@
 ---
 name: es-domain-reviewer
-description: このイベントソーシングPoC専用のドメイン/設計レビューアー。`.claude/rules/` 配下のルール(event-sourcing, aggregate-design, cqrs-projection, ddd-ubiquitous-language, testing)への準拠をチェックする。集約/コマンド/イベント/プロジェクション/テストを追加・変更した後、コミット前に使用する。「レビューして」「ルールに沿っているか確認して」等でも使用。Stopフックのレビューゲート用に呼ぶ場合は必ず run_in_background:false で呼び、結果を待つこと。
+description: このイベントソーシングPoC専用のドメイン/設計レビューアー。`.claude/rules/` 配下のルール(event-sourcing, aggregate-design, cqrs-projection, ddd-ubiquitous-language, testing)への準拠をチェックする。集約/コマンド/イベント/プロジェクション/テストを追加・変更した後、コミット前に使用する。「レビューして」「ルールに沿っているか確認して」等でも使用。Stopフックのレビューゲート用に呼ぶ場合は、結果(REVIEW_VERDICT)を受け取るまで待つこと(非同期で起動したら TaskOutput で回収する)。
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---

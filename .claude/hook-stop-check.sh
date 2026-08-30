@@ -39,20 +39,39 @@ if [ $? -ne 0 ]; then
 fi
 
 # Java変更のレビューゲート（gitリポジトリがある場合のみ）
+#
+# 「レビュー済みか」は *ファイルの更新時刻* と *結果が届いた時刻* で判定する。
+# transcript 上の Edit/Write を数える方式だと、Bash（sed / heredoc 等）で書き換えた分を取りこぼす。
 if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
-  JAVA_CHANGED=$(git diff --name-only HEAD -- '*.java' 2>/dev/null)
+  # 追跡済みの変更に加えて未追跡の .java も見る（新規クラスは git diff に出ない）
+  JAVA_CHANGED=$( { git diff --name-only HEAD -- '*.java' 2>/dev/null;
+                    git ls-files --others --exclude-standard -- '*.java' 2>/dev/null; } | sort -u )
+
   if [ -n "$JAVA_CHANGED" ] && [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
     VERDICT_JSON=$(jq -c -n -f .claude/review-verdict.jq "$TRANSCRIPT" 2>/dev/null)
-    LAST_EDIT=$(echo "$VERDICT_JSON" | jq -r '.lastEdit // -1')
-    REVIEW_LINE=$(echo "$VERDICT_JSON" | jq -r '.reviewLine // -1')
     VERDICT=$(echo "$VERDICT_JSON" | jq -r '.verdict // empty')
+    VERDICT_AT=$(echo "$VERDICT_JSON" | jq -r '.verdictAt // empty')
 
-    if [ "$REVIEW_LINE" -lt "$LAST_EDIT" ]; then
-      FAILURES+=("Javaコードが変更されていますが、最新の変更に対して es-domain-reviewer のレビューが実行されていません。es-domain-reviewer を run_in_background:false で実行してください。")
+    # 変更された .java のうち最も新しい更新時刻（削除だけなら 0 のまま）
+    NEWEST_JAVA=0
+    while IFS= read -r f; do
+      [ -f "$f" ] || continue
+      m=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null)
+      [ -n "$m" ] && [ "$m" -gt "$NEWEST_JAVA" ] && NEWEST_JAVA=$m
+    done <<< "$JAVA_CHANGED"
+
+    REVIEW_EPOCH=0
+    if [ -n "$VERDICT_AT" ]; then
+      REVIEW_EPOCH=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "${VERDICT_AT%.*}" +%s 2>/dev/null \
+                     || date -u -d "$VERDICT_AT" +%s 2>/dev/null || echo 0)
+    fi
+
+    if [ -z "$VERDICT" ]; then
+      FAILURES+=("Javaコードが変更されていますが、es-domain-reviewer のレビュー結果を確認できません。es-domain-reviewer を実行し、完了を待ってください（非同期で起動した場合は TaskOutput で結果を受け取ること）。")
     elif [ "$VERDICT" = "FAIL" ]; then
       FAILURES+=("es-domain-reviewer が Critical 指摘を報告しています。指摘を確認・修正のうえ再度レビューしてください。")
-    elif [ "$VERDICT" != "PASS" ]; then
-      FAILURES+=("es-domain-reviewer の実行結果(REVIEW_VERDICT)を確認できませんでした。run_in_background:false で実行し、完了を待ってください。")
+    elif [ "$NEWEST_JAVA" -gt "$REVIEW_EPOCH" ]; then
+      FAILURES+=("レビュー完了後に Java コードが変更されています。es-domain-reviewer を実行し直してください。")
     fi
   fi
 fi

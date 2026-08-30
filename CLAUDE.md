@@ -37,7 +37,7 @@
   - `add-aggregate` … 集約一式（コマンド/イベント/集約/Fixtureテスト）を規約準拠で雛形生成
   - `add-projection` … リードモデル＋プロジェクション＋クエリハンドラ＋テストを雛形生成
 - **SubAgents** `.claude/agents/`
-  - `es-domain-reviewer` … `.claude/rules/` 準拠をレビュー（Stopフックのゲート。`run_in_background:false` で呼ぶ）
+  - `es-domain-reviewer` … `.claude/rules/` 準拠をレビュー（Stopフックのゲート。**結果（`REVIEW_VERDICT`）を受け取るまで待つ**。非同期で起動したら `TaskOutput` で回収する）
   - `es-poc-tester` … 起動済みアプリに REST を叩き実地確認（M4以降は DynamoDB 行も検査）
   - `axon-docs-researcher` … Axon リファレンス/apidocs を参照しバージョン差のAPI疑問を確認（特に5.x）
 - **Hooks** `.claude/settings.json`
