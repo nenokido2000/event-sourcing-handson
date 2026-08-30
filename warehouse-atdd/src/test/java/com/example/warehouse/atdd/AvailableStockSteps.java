@@ -9,6 +9,7 @@ import java.util.Map;
 
 import static com.example.warehouse.atdd.AcceptanceHttpClient.params;
 import static com.example.warehouse.atdd.AcceptanceHttpClient.query;
+import static com.example.warehouse.atdd.ScenarioIds.of;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -17,6 +18,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>投影はコマンドの後から追いつくので、期待は必ず {@link EventualConsistency} 越しに書く。
  * 行がまだ無い状態も「不一致」として扱われ、そのまま再試行に乗る。
+ *
+ * <p>照会は {@link ScenarioIds} で写した物理IDで行い、<b>失敗メッセージは Spec の論理名で書く</b>（H51）。
  */
 public class AvailableStockSteps {
 
@@ -27,7 +30,8 @@ public class AvailableStockSteps {
         EventualConsistency.awaitAssertion(
                 "SKU " + sku + " / ロケーション " + location + " の引当可能在庫",
                 () -> {
-                    JsonArray rows = query("/api/available-stock", params("sku", sku, "location", location));
+                    JsonArray rows = query("/api/available-stock",
+                            params("sku", of(sku), "location", of(location)));
 
                     assertThat(rows)
                             .as("SKU %s / ロケーション %s の行", sku, location)
