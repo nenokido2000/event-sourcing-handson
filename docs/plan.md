@@ -20,8 +20,8 @@
 - CQRSは、読み書き分離が妥当なので積極採用する。
 - **開発手法は TDD＋ATDD の二重ループ**（実装フェーズ全体を貫く）:
   - 内側ループ = **TDD（ドメイン先行）**。集約・値オブジェクトは Axon `AggregateTestFixture` の Given-When-Then を**先に書いて失敗させ**（Red）→ 最小実装（Green）→ 整理（Refactor）。特にドメインモデルはハンズオンと合わせて実演する。
-  - 外側ループ = **ATDD（受入仕様先行）**。Gauge の Markdown Spec で受入基準（ユビキタス言語のまま）を先に書き、Playwright request API でヘッドレスに REST を叩いて検証する。仕様の明確化を早期に効かせる目的で **M3 から導入**。
-- **優先順位ガード（最優先は ES/CQRS 概念の体得）**: 技術要素（TDD/ATDD/IaC）は実務忠実度として価値があるが、あるMでツール整備が主目的（ドメイン・イベント設計）の学習を圧迫しそうなら、**主目的を優先し当該ツールはそのM内で後ろ倒し**にする。ATDDハーネス（Gauge/Playwright）は最初に薄い1本を通して基盤化し、以降は再利用する（毎回作り込まない）。
+  - 外側ループ = **ATDD（受入仕様先行）**。Gauge の Markdown Spec で受入基準（ユビキタス言語のまま）を先に書き、JDK の `HttpClient` でヘッドレスに REST を叩いて検証する（[H50](decisions.md#h50-受入ステップの-http-クライアントと拒否の受け取り方)）。仕様の明確化を早期に効かせる目的で **M3 から導入**。
+- **優先順位ガード（最優先は ES/CQRS 概念の体得）**: 技術要素（TDD/ATDD/IaC）は実務忠実度として価値があるが、あるMでツール整備が主目的（ドメイン・イベント設計）の学習を圧迫しそうなら、**主目的を優先し当該ツールはそのM内で後ろ倒し**にする。ATDDハーネス（Gauge）は最初に薄い1本を通して基盤化し、以降は再利用する（毎回作り込まない）。
 - 完成後、他言語PoC（PHP + フレームワークTBD）へ展開する情報を整理する。
 - **仕上げに成果物（最終5.xの倉庫）を AWS 実環境へデプロイ**し、環境構築とデプロイを **Terraform(IaC)** で再現可能にする（M8）。
 
@@ -55,7 +55,7 @@
 - ローカルAWS: **DynamoDB Local**（`amazon/dynamodb-local`。DynamoDB + DynamoDB Streams）。AWS SDK for Java v2。※LocalStackはライセンス必須化（2026-03、アカウント+auth token必須）につき不採用。DynamoDB Localは無料・アカウント不要で本PoCに必要なDynamoDB+Streamsを満たす。
 - **テスト/開発手法**:
   - TDD: JUnit 5 ＋ Axon `AggregateTestFixture`（集約）/ 値オブジェクトは素の JUnit。**テストを先に書く**運用。
-  - ATDD: **Gauge**（`gauge-java` プラグイン、仕様は Markdown）＋ **Playwright for Java**（`APIRequestContext` で REST をヘッドレス実行。**受入 Spec はブラウザを使わない**）。Spec は生きたドキュメントとして `specs/` に置く。
+  - ATDD: **Gauge**（`gauge-java`、仕様は Markdown）＋ **JDK 標準の `java.net.http.HttpClient`**（REST をヘッドレス実行。**受入 Spec はブラウザを使わない** / [H50](decisions.md#h50-受入ステップの-http-クライアントと拒否の受け取り方)）。Spec は生きたドキュメントとして `specs/` に置く。
     - 版と Gradle 組み込み方（`org.gauge` プラグインで `warehouse-atdd` から回す／アプリは手動起動が前提／`check` には繋がない）は
       [`decisions.md`](decisions.md#h37-受入テストハーネスの版と-gradle-組み込み方)（H37）。版の正は [`../gradle/libs.versions.toml`](../gradle/libs.versions.toml)。
   - **観測用 UI は別枠で用意する**（M3-c / [H34](decisions.md#h34-観測用-ui-の位置づけ)）。**UI は観測手段であってテスト手段ではない**ので、受入 Spec は API ベースのまま変えない。
@@ -92,7 +92,7 @@ event-sourcing/
   warehouse-query/               # プロジェクション・リードモデル(JPA)・クエリハンドラ
   warehouse-eventstore-dynamodb/ # M4で追加: AbstractEventStorageEngine のDynamoDB実装
   warehouse-app/                 # Spring Boot起動・REST API・Axon設定・前段バリデーション（＋M3-cで観測UI）
-  warehouse-atdd/                # M3で追加: Gauge のステップ実装（Java）＋ Playwright(request) ランナー
+  warehouse-atdd/                # M3で追加: Gauge のステップ実装（Java）＋ REST クライアント
   specs/                         # M2で追加: Gauge の Markdown Spec（受入基準＝生きたドキュメント。H31）
   gradlew, gradle/wrapper/...    # Wrapper同梱
 ```
@@ -117,7 +117,7 @@ event-sourcing/
     **M2 の分析で最も深い領域になった**（[H18](decisions.md#h18-棚卸は数える対象の母集合を持つか)〜[H23](decisions.md#h23-棚卸の重複開始)・[H27](decisions.md#h27-棚卸凍結サーガの状態と終わり方)）。
     **本PoC唯一の Saga（P5）と、唯一イベントから再構築できないビュー（棚卸干渉）は棚卸にしか無く**、
     実装しなければ設計が確かめられないまま残る。
-  - 外側(ATDD): **Spec の文面は M2 で書き終えている**（[`../specs/`](../specs/)）。M3 では `warehouse-atdd` に Playwright(request) で REST を叩くステップ実装を用意して緑にしていく。**まず `harness` タグの1本（各 spec のハッピーパス）でハーネスを立ち上げ**、残りのシナリオはドメインの形が見えてから緑にする（主目的を先に固める）。
+  - 外側(ATDD): **Spec の文面は M2 で書き終えている**（[`../specs/`](../specs/)）。M3 では `warehouse-atdd` に REST を叩くステップ実装を用意して緑にしていく。**まず `harness` タグの1本（各 spec のハッピーパス）でハーネスを立ち上げ**、残りのシナリオはドメインの形が見えてから緑にする（主目的を先に固める）。
   - 内側(TDD): 集約・値オブジェクトを Axon Fixture / JUnit で**テスト先行**（Red→Green→Refactor）。不変条件 `available≥0` の異常系も先に書く。
   - 内側が揃うと外側の受入 Spec が緑に到達 → 垂直スライス完成。この二重ループを以降のMでも踏襲する。
   - ⚑ **この段の前後で「ガード整備 #2（TDD/ATDD遵守ゲート）」を実施**（skill の test-first 既定化・レビュアーのチェックリスト追加・Stop フックのテスト不在チェック）。詳細は「ガード / 品質ゲートの整備」節。
@@ -164,7 +164,7 @@ event-sourcing/
   - `add-aggregate` skill を **test-first の既定動作**に（①失敗するFixtureを生成→②`gradlew test`で赤を見せる→③最小実装で緑→④整理）。`add-projection` も同様。
   - **レビューゲート（es-domain-reviewer）のチェックリストに TDD/ATDD 項目を追加**（各振る舞いにテストがあるか／実装詳細でなく振る舞いを検証しているか／不変条件違反の異常系を `expectException` しているか／受入 Spec が存在するか）。
   - 既存 **Stop フック（`./gradlew test`＋レビューゲート）**に軽い追加: 新規 `*Aggregate.java` に対応する `*Test.java` が無ければ block（＝*テスト不在*を弾く。test-first そのものは機械検証不能なので代理指標）。
-  - ATDD の Gauge/Playwright はアプリ起動が要り重いので Stop フックには載せず **CI 側**で回す（下記 #3 と合流）。ローカルは Spec 存在チェック程度に留める。
+  - ATDD の Gauge はアプリ起動が要り重いので Stop フックには載せず **CI 側**で回す（下記 #3 と合流）。ローカルは Spec 存在チェック程度に留める。
 - **#3 デプロイ/クレデンシャルの本番ガード（M8 直前で実施）**:
   - **構造的回避**（最優先）: AWS **SSO/OIDC の短命クレデンシャル**を使い静的キーを作らない。RDS パスワード等は **Secrets Manager / SSM**。**S3 リモート state（暗号化＋バケット非公開）＋ DynamoDB ロック**にして tfstate を repo に落とさない（M8 の「local か S3 か」はこの方針で S3 に倒す）。
   - **CI バックストップ**: GitHub Actions に **gitleaks ジョブ**（`--no-verify` 抜け対策）＋ **GitHub secret scanning / push protection 有効化**。ATDD 全 Spec もここで実行。

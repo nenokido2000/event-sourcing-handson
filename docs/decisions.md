@@ -66,6 +66,7 @@
 | [H47](#h47-前段バリデーションの枠組み) | 前段バリデーションの枠組み | `warehouse-app` に置き best effort と明示する。対象と例外を1表に集める | 確定 | 2026-08-16 |
 | [H48](#h48-棚卸干渉ビューの更新をどのグループが担うか) | 棚卸干渉ビューの更新をどのグループが担うか | 全列をポリシー側の processing group に寄せ、再構築の対象外にする | 確定 | 2026-08-16 |
 | [H49](#h49-p2-の再処理に上限を設けるか) | P2 の再処理に上限を設けるか | 設けない（再配信に任せる）。収束しないのはプロジェクション停止時で検知シグナル | 確定 | 2026-08-16 |
+| [H50](#h50-受入ステップの-http-クライアントと拒否の受け取り方) | 受入ステップの HTTP クライアントと拒否の受け取り方 | Playwright をやめ JDK `HttpClient` へ。拒否は投げずに `ScenarioDataStore` に覚える | 確定 | 2026-08-30 |
 
 **保留・暫定の扱い**: H5 は M3+ の改修シナリオ候補として温存（分析には現れるが M3 の最初のスライスには入れない）。
 H11 は実績データがないための**暫定**であり、見直しの前提が明記されている（下記参照）。
@@ -1999,9 +2000,13 @@ Axon のエンティティはライブラリの `@Entity` なので、こちら�
 版は Maven Central の**検索インデックスが古い値を返した**（`playwright:1.52.0` / `gauge-java:0.11.3`）ため、
 Gradle に `latest.release` を解決させて実測し直した。プラグインの中身も `javap` で確認している。
 
+> **改訂（2026-08-30）**: **HTTP クライアントの選定は [H50](#h50-受入ステップの-http-クライアントと拒否の受け取り方) で撤回**し、
+> Playwright をやめて JDK 標準の `java.net.http.HttpClient` にした。下表の Playwright の版と
+> 「ブラウザ」の行は**確定時点の記録**として残す。Gauge の組み込み方と版の固定方針は変わらない。
+
 | 確認したこと | 結果 |
 |---|---|
-| `com.microsoft.playwright:playwright` | **1.62.0** |
+| `com.microsoft.playwright:playwright` | **1.62.0**（H50 で廃止） |
 | `com.thoughtworks.gauge:gauge-java` | **1.0.3** |
 | Gradle プラグイン | **`org.gauge` 3.2.0**（実体 `org.gauge.gradle:gauge-gradle-plugin`） |
 | 旧 id `com.thoughtworks.gauge` | 1.7.2 のマーカーは残るが**実装 jar が解決不能**（`gradle.plugin.com.thoughtworks.gauge.gradle:gauge-gradle-plugin`）→ 使えない |
@@ -2027,7 +2032,7 @@ Gradle に `latest.release` を解決させて実測し直した。プラグイ�
 | Gauge のプロジェクトファイル | ~~`manifest.json` / `env/default/*.properties` は `warehouse-atdd/` に置く~~ → **リポジトリルートに置く**（下の[再改訂](#再改訂-gauge-プロジェクトをルートへ2026-08-26)） |
 | タスクの繋ぎ方 | **`check` / `test` には繋がない**。アプリ起動が要るため、明示的に呼ぶときだけ動く |
 | アプリの起動 | **手動起動が前提**（別端末で `bootRun`）。Spec 側はベース URL を環境変数で受ける（既定 `http://localhost:8080`） |
-| ブラウザ | 使わない（`APIRequestContext` のみ）。ブラウザのダウンロードは抑止する（Java 版は `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`。実際に効くかは1本目で確認する） |
+| ブラウザ | 使わない（~~`APIRequestContext` のみ。ブラウザのダウンロードは `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` で抑止する~~ → **Playwright ごと廃止**。[H50](#h50-受入ステップの-http-クライアントと拒否の受け取り方)） |
 | CLI | Homebrew で入れる。**別途 `gauge install java`（言語プラグイン）が要る**——ステップ実装用の jar `gauge-java` とは別物 |
 
 ### 検討した選択肢と却下理由
@@ -3062,6 +3067,112 @@ REST の入口を1本足す: `POST /api/external-events/order-cancelled`
 - **注文取消解放（P7）には同じ自己修正が効かない**（[H46](#h46-出荷指示前に注文が取り消されたときの引当解放) の既知の穴）。
   P2 は在庫集約が弾いてくれるが、P7 には弾く相手がいないため。
   **「例外にできる相手がいるか」が自己修正の成否を分ける**、という対比になっている。
+
+---
+
+## H50 受入ステップの HTTP クライアントと拒否の受け取り方
+
+**状態**: 確定（2026-08-30 / M3-a 実装中）
+
+### 文脈
+
+**論点は2つあり、どちらも `AcceptanceHttpClient` の設計に落ちるので1本にまとめる。**
+
+**① Playwright を選んだ前提が消えている。**
+
+Playwright は「受入 Spec を**画面ベース**で書く可能性がある」という前提で挙がった道具だった。
+その後 [H34](#h34-観測用-ui-の位置づけ) が **「UI は観測手段であってテスト手段ではない。この2つを混ぜない」**
+と確定し、`受入 Spec を UI ベースに切り替える` を明示的に却下した。**受入 Spec は API ベースに固定された。**
+
+[H37](#h37-受入テストハーネスの版と-gradle-組み込み方) は版（1.62.0）と「ブラウザは使わない」ことを決めたが、
+**選定そのものを問い直してはいない**。1本目のステップ実装が動いた今、実際に使っている API を数えると6つしかない。
+
+| 使っている Playwright API | 代替 |
+|---|---|
+| `APIRequest.NewContextOptions#setBaseURL` | ベース URL を自前で連結 |
+| `APIRequestContext#post` ＋ `RequestOptions#setData(Map)` | `HttpRequest.BodyPublishers.ofString(gson.toJson(...))` |
+| `APIRequestContext#get` ＋ `RequestOptions#setQueryParam` | クエリ文字列を自前で組む |
+| `APIResponse#ok` / `#status` / `#text` | `HttpResponse#statusCode` / `#body` |
+
+トレース・HAR・認証状態の共有・リクエスト傍受といった **Playwright 固有の価値は1つも使っていない**。
+一方で `Playwright.create()` は**ブラウザを落とさなくても Node のドライバプロセスを起動する**ため、
+その開閉のためだけに `AcceptanceLifecycle`（`@BeforeSuite` / `@AfterSuite`）が要る。
+
+**② 拒否を次のステップで照合できない。**
+
+[`../specs/warehouse/receiving.spec`](../specs/warehouse/receiving.spec) は**失敗する要求と、その照合を別の行**に書いている。
+
+```
+* 入荷 "RCP-1" から ロケーション "A-01" へ "20" 格納する     ← 失敗する想定の POST
+* 直前の要求は "ReceiptAlreadyClosedException" で拒否される   ← 次の行で照合
+```
+
+ところが `AcceptanceHttpClient#command` は `!response.ok()` で即 `AssertionError` を投げるため、
+**1行目でシナリオが落ちて2行目に到達しない**。[H38](#h38-受入ステップが叩く-rest-api-の契約) はサーバ側の契約
+（`ProblemDetail` ＋ 拡張 `code` に例外の単純名）を決めたが、**ステップ実装がそれをどう受け取るか**は未決だった。
+
+### 決定
+
+**① Playwright をやめ、JDK 標準の `java.net.http.HttpClient` に差し替える。**
+
+**② コマンドの拒否は例外にせず、直前の応答として覚える。覚え場所は Gauge の `ScenarioDataStore`。**
+
+| 決めたこと | 内容 |
+|---|---|
+| HTTP クライアント | `java.net.http.HttpClient`（JDK 標準・依存ゼロ）。JSON は Gson のまま（`gauge-java` の推移依存なので増えない） |
+| `AcceptanceLifecycle` | **削除する**。`HttpClient` はドライバプロセスを持たず、スイート単位の開閉が要らない |
+| コマンドの拒否 | `command` は**投げない**。ステータスと本文を `ScenarioDataStore` に置いて返す |
+| 照合のステップ | `直前の要求は <> で拒否される` が `ScenarioDataStore` から取り出し、`ProblemDetail` の `code` と突き合わせる |
+| **拒否を放置したシナリオ** | 次のコマンドの手前と**シナリオの終わり**（`@AfterScenario`）で検出して落とす。「拒否されたのに誰も照合しなかった」を黙って通さない。すでに失敗しているシナリオでは何もしない（本当の失敗原因を覆い隠さない） |
+| クエリ（GET） | 従来どおり失敗を即 `AssertionError`。リードモデルの照会が 4xx/5xx なのは常に異常 |
+
+`ScenarioDataStore` を選んだのは、**Gauge のランナーがシナリオ境界で自動的に空にする**ため
+（`ScenarioDataStore#clear` はランナーが呼ぶ package-private メソッド。`gauge-java:1.0.3` の jar を `javap` で確認）。
+static フィールドで持つと**シナリオをまたいで拒否が残り**、後続シナリオが誤って緑になる。
+
+### 検討した選択肢と却下理由
+
+- **却下: Playwright を維持する**（将来 UI テストに使うかもしれない）。**H34 がその道を閉じている**。
+  受入 Spec が UI ベースになる＝H34 を覆すことなので、「UI ができたら再導入」という条件は成立しない。
+  加えて [`plan.md`](plan.md) の優先順位ガード（技術要素が ES/CQRS の体得を圧迫するなら後ろ倒し）に照らすと、
+  **Playwright は ES/CQRS の学びにゼロ寄与**で、driver のダウンロード・プラットフォーム差・CI の追加セットアップ
+  という壊れどころだけを持ち込んでいる。
+- **却下: RestAssured に替える**。JSON パス表明が書きやすくなるが、**依存が減らない**（Playwright を別の重い
+  依存に置き換えるだけ）。アサーションは AssertJ で足りており、`EventualConsistency` のポーリングと
+  組み合わせる形は変わらない。
+- **却下: Spec の文面を変え、失敗する要求と照合を1ステップに畳む**
+  （`入荷 <> から ロケーション <> へ <> 格納すると <> で拒否される`）。ステップ実装は素直になるが、
+  **M2 で確定した文面（[H31](#h31-受入シナリオの置き場と粒度)）を実装都合で書き換える**ことになる。
+  「実装の都合を受入基準に持ち込まない」は H31・H34 で二度採った姿勢で、ここで崩さない。
+  同じ文型は allocation / stocktaking にも要るので、汎用の `直前の要求は <> で拒否される` のほうが再利用が効く。
+- **却下: 例外名の照合をやめ、HTTP ステータスだけ見る**。Spec が例外名を名指ししている以上、
+  照合先を落とすと**「拒否された」ことしか分からず、なぜ拒否されたかが受入基準から消える**。
+  H38 が `code` を拡張フィールドに出すと決めたのは、まさにこの照合のため。
+- **却下: `command` に「失敗を許す版」を別メソッドで用意する**（`commandExpectingFailure`）。
+  ステップ実装が**どちらを呼ぶかを事前に知っている**必要があり、Spec の行順で決まる話をコードに固定してしまう。
+  同じ `格納する` ステップが成功も失敗もするので、呼び分けができない。
+
+### 帰結
+
+- **`AcceptanceLifecycle.java` は消える。** [H37](#h37-受入テストハーネスの版と-gradle-組み込み方) の
+  「ブラウザのダウンロードを抑止する（`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`）」も不要になり、
+  [`../env/default/default.properties`](../env/default/default.properties) から落とす。
+  **H37 で撤回されるのはこの2点だけ**で、Gauge の組み込み方（`Exec` タスク＋`gauge_custom_classpath`）と
+  版の固定方針はそのまま。
+- [`../gradle/libs.versions.toml`](../gradle/libs.versions.toml) から `playwright` を落とす。
+  **`warehouse-atdd` の依存は `gauge-java` / `assertj-core` / `gson` の3つ**になる。
+- [`../.claude/rules/testing.md`](../.claude/rules/testing.md) / [`plan.md`](plan.md) /
+  [`../specs/README.md`](../specs/README.md) の「Playwright request API」の記述を差し替える。
+  **「ブラウザ/UI は用意しない」という趣旨は変わらない**。
+  `specs/README.md` は**実行のかたちの図**を持つので忘れやすい（レビューで検出された）。
+- **再導入の条件は「観測 UI ができたら」ではなく「H34 を覆すとき」。** M3-c の UI は人が目で見るための
+  観測手段で、自動操作の対象にならない。この一文を残すのは、M3-c で同じ議論が再燃するのを防ぐため。
+- **M8 の本番 Spec 実行に影響しない。** ベース URL を環境変数で受ける形（H37）は `HttpClient` でも同じで、
+  むしろ**実行環境に Node のドライバが要らなくなる**ぶん軽い。
+- 拒否の受け取り方が決まったことで、`直前の要求は <> で拒否される` が実装可能になる。
+  これは receiving / allocation / stocktaking の3本が使う共通ステップ。
+- **シナリオ間でアプリの状態が持ち越される問題は未解決**（同じ `RCP-1` / `A-01` を複数シナリオが使う）。
+  本項の範囲外として **[H51] で別に決める**。それまでは `-Ptags=harness` の1シナリオ実行に留まる。
 
 ---
 

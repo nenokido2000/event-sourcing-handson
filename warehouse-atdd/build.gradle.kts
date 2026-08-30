@@ -11,7 +11,6 @@ dependencies {
     testImplementation(platform(libs.spring.boot.dependencies))
 
     testImplementation(libs.gauge.java)
-    testImplementation(libs.playwright)
     testImplementation(libs.assertj.core)
     testImplementation(libs.gson)
 }

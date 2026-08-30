@@ -18,11 +18,12 @@ M3 で `warehouse-atdd` にステップ実装を付けて緑にしていく。
 **起動済みのアプリに HTTP で REST を直接コールする**。ブラウザも UI も使わない。
 
 ```
-Gauge（Markdown Spec）→ ステップ実装（Java）→ Playwright の request API → REST → Spring Boot
+Gauge（Markdown Spec）→ ステップ実装（Java）→ JDK の HttpClient → REST → Spring Boot
 ```
 
-Playwright を使うのは request API（ブラウザを起動せず HTTP リクエストだけ投げるモード）が目的で、
-ブラウザ自動化の機能は使わない。
+HTTP クライアントは JDK 標準の `java.net.http.HttpClient`
+（[H50](../docs/decisions.md#h50-受入ステップの-http-クライアントと拒否の受け取り方)）。
+受入 Spec は API ベースなので、ブラウザ自動化の道具は要らない。
 
 > **観測用 UI（M3-c）は受入 Spec の対象外**（[H34](../docs/decisions.md#h34-観測用-ui-の位置づけ)）。
 > **UI は人が業務の動きを理解するための観測手段**であって、完成の定義ではない。

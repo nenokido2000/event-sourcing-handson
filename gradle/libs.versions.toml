@@ -2,7 +2,7 @@
 springBoot = "4.1.0"
 axon = "4.13.2"
 # 受入テスト（ATDD）。選定の理由は docs/decisions.md H37
-playwright = "1.62.0"
+# HTTP クライアントは JDK 標準の java.net.http.HttpClient（H50 で Playwright を廃止）
 gaugeJava = "1.0.3"
 
 [libraries]
@@ -29,7 +29,6 @@ assertj-core = { module = "org.assertj:assertj-core" }
 
 # 受入テスト（版はこのファイルが正 / H37）
 gauge-java = { module = "com.thoughtworks.gauge:gauge-java", version.ref = "gaugeJava" }
-playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright" }
 # 受入ステップがリードモデルの応答を読むため。版は spring-boot-dependencies が管理
 gson = { module = "com.google.code.gson:gson" }
 
