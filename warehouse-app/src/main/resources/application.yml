@@ -11,6 +11,19 @@ spring:
     open-in-view: false
     hibernate:
       ddl-auto: update
+    properties:
+      hibernate:
+        # 既定を書き側に寄せる。Axon のエンティティはライブラリの @Entity なので
+        # こちらからスキーマを指定できず、指定できる側（リードモデル）に明示を寄せる（docs/decisions.md H36）
+        default_schema: eventstore
+
+axon:
+  axonserver:
+    # Axon Server は使わない（CLAUDE.md の方針）。これが無いと JPA のイベントストアが条件で降りる（H36）
+    enabled: false
+  serializer:
+    # Spring Boot 4 は Jackson 3 が既定。Axon 4.13 同梱の Jackson 3 対応版で3系統すべてを揃える（H35）
+    general: jackson3
 
 server:
   port: 8080

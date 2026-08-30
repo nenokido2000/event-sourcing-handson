@@ -33,6 +33,9 @@ services:
       - POSTGRES_DB=warehouse_read
     volumes:
       - warehouse-pgdata:/var/lib/postgresql/data
+      # 初回起動時にスキーマを決定的に作る（docs/decisions.md H36）。
+      # 注: このディレクトリは空の data ボリュームに対してのみ実行される
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U warehouse -d warehouse_read"]
       interval: 10s

@@ -6,6 +6,8 @@ plugins {
 dependencies {
     api(project(":warehouse-domain"))
     implementation(platform(libs.axon.bom))
+    implementation(libs.axon.configuration)
+    // @QueryHandler
     implementation(libs.axon.messaging)
 
     implementation(platform(libs.spring.boot.dependencies))
