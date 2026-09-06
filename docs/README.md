@@ -54,6 +54,8 @@ M3-a 着手前に注文取消解放（P7）が加わった → [H46](decisions.m
 2. [`tactical-design.md`](tactical-design.md) … 集約の状態・受付ゲート・例外・テスト骨子。**実装はこれを仕様として TDD で駆動する**
 3. [`ubiquitous-language.md`](ubiquitous-language.md) … 命名で迷ったらここ（用語の正）
 4. [`../.claude/rules/`](../.claude/rules/) … 遵守ルール（ES / 集約設計 / CQRS / 命名 / テスト）
+5. [`axon-command-path.md`](axon-command-path.md) … **実装したものが Axon の中でどう動くか**（経路のウォークスルー）。
+   仕様ではなく読み物。詰まったとき・思い出すときに読む
 
 外側（受入 Spec）と内側（Fixture テスト）の**役割分担は
 [H31](decisions.md#h31-受入シナリオの置き場と粒度)** が正。同じ検証を両方に書かない。
@@ -68,6 +70,7 @@ M3-a 着手前に注文取消解放（P7）が加わった → [H46](decisions.m
 |---|---|
 | [`plan.md`](plan.md) | **実行計画**（M0〜M8・技術選定・ガード整備）。設計の入口ではない |
 | [`setup.md`](setup.md) | 環境構築の手順。clone した人が最初に読む |
+| [`axon-command-path.md`](axon-command-path.md) | コマンドがフレームワークの中を流れる経路（クラス・メソッド・行）。末尾に自己確認の問い |
 
 ## 書き足すときの約束
 
