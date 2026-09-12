@@ -2252,6 +2252,7 @@ com.example.warehouse
 | 第二階層は `command` / `event` | イベントの型を**一覧する場面が3回来る**（M3+ のアップキャスタ / M4 の自作ストア / M5 の移行） |
 | 集約と集約固有の値オブジェクトは BC 直下 | `InventoryItemId` / `AllocationId` / `ReceiptId` 等。その BC の概念であって共有物ではない |
 | 共通の値オブジェクトは `shared` | [`tactical-design.md`](tactical-design.md) の「共通の値オブジェクト」に対応。**共有カーネルを1つ増やす** |
+| 例外・列挙も値オブジェクトと同じ扱い | 集約固有のもの（`InsufficientAvailableStockException` / `ClosureReason`）は **BC 直下**、共有カーネルの値オブジェクトの規則に属するもの（`InvalidQuantityException` は `Quantity` の規則）は **`shared`**。`command` / `event` に分ける動機（一覧する場面が3回来る）が無い（2026-09-12 追記） |
 | 外部 BC はイベント契約だけ | `ordering` に `OrderAccepted` / `OrderLine`。集約もコマンドも作らない |
 
 ### 検討した選択肢と却下理由
@@ -2278,6 +2279,11 @@ com.example.warehouse
   パッケージプライベートには畳めない。
 - `ordering` に集約を作らないので、外部イベントの入口は [H38](#h38-受入ステップが叩く-rest-api-の契約) の
   `/api/external-events/` だけになる。
+- **追記（2026-09-12）**: M3-a の最初の垂直スライスは `command` / `event` を作らず**BC 直下フラットで実装されていた**
+  （この決定からの逸脱で、注記も残っていなかった）。引当スライスの着手時に気づき、本決定に合わせてコードを移動した。
+  移動できたのは、[H52](#h52-イベントの値オブジェクトを平坦化するか) で旧形式のイベントを捨てて
+  **イベントストアが空だった**からで、行が積まれた後なら `payloadType` の FQCN が解決できなくなっていた
+  （本決定が「1本目のイベントを書く前に凍結する必要がある」と書いたのはこの意味）。
 
 ---
 

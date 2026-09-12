@@ -1,12 +1,14 @@
 package com.example.warehouse.inventory;
 
+import com.example.warehouse.inventory.command.PlaceStock;
+import com.example.warehouse.inventory.event.StockPlaced;
 import com.example.warehouse.shared.InvalidQuantityException;
 import com.example.warehouse.shared.Quantity;
 import org.axonframework.commandhandling.CommandHandler;
 import org.axonframework.eventsourcing.EventSourcingHandler;
+import org.axonframework.modelling.command.AggregateCreationPolicy;
 import org.axonframework.modelling.command.AggregateIdentifier;
 import org.axonframework.modelling.command.CreationPolicy;
-import org.axonframework.modelling.command.AggregateCreationPolicy;
 
 import static org.axonframework.modelling.command.AggregateLifecycle.apply;
 

@@ -1,9 +1,9 @@
 package com.example.warehouse.command.receiving;
 
-import com.example.warehouse.inventory.InventoryItemId;
-import com.example.warehouse.inventory.PlaceStock;
 import com.example.warehouse.command.ProcessingGroups;
-import com.example.warehouse.receiving.StockPutAway;
+import com.example.warehouse.inventory.InventoryItemId;
+import com.example.warehouse.inventory.command.PlaceStock;
+import com.example.warehouse.receiving.event.StockPutAway;
 import org.axonframework.commandhandling.gateway.CommandGateway;
 import org.axonframework.config.ProcessingGroup;
 import org.axonframework.eventhandling.EventHandler;

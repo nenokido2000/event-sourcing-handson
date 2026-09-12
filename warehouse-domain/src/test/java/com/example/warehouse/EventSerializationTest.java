@@ -1,12 +1,12 @@
 package com.example.warehouse;
 
 import com.example.warehouse.inventory.InventoryItemId;
-import com.example.warehouse.inventory.StockPlaced;
+import com.example.warehouse.inventory.event.StockPlaced;
 import com.example.warehouse.receiving.ClosureReason;
-import com.example.warehouse.receiving.InboundReceiptClosed;
 import com.example.warehouse.receiving.ReceiptId;
-import com.example.warehouse.receiving.StockPutAway;
-import com.example.warehouse.receiving.StockReceived;
+import com.example.warehouse.receiving.event.InboundReceiptClosed;
+import com.example.warehouse.receiving.event.StockPutAway;
+import com.example.warehouse.receiving.event.StockReceived;
 import com.example.warehouse.shared.LocationId;
 import com.example.warehouse.shared.Quantity;
 import com.example.warehouse.shared.Sku;

@@ -1,6 +1,6 @@
 package com.example.warehouse.query.inventory;
 
-import com.example.warehouse.inventory.StockPlaced;
+import com.example.warehouse.inventory.event.StockPlaced;
 import org.axonframework.config.ProcessingGroup;
 import org.axonframework.eventhandling.EventHandler;
 import org.axonframework.eventhandling.Timestamp;

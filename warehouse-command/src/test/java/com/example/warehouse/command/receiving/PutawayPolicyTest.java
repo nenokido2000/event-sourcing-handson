@@ -1,9 +1,9 @@
 package com.example.warehouse.command.receiving;
 
 import com.example.warehouse.inventory.InventoryItemId;
-import com.example.warehouse.inventory.PlaceStock;
+import com.example.warehouse.inventory.command.PlaceStock;
 import com.example.warehouse.receiving.ReceiptId;
-import com.example.warehouse.receiving.StockPutAway;
+import com.example.warehouse.receiving.event.StockPutAway;
 import com.example.warehouse.shared.LocationId;
 import com.example.warehouse.shared.Quantity;
 import com.example.warehouse.shared.Sku;

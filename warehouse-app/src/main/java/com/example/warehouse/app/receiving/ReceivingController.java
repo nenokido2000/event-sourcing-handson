@@ -1,10 +1,10 @@
 package com.example.warehouse.app.receiving;
 
-import com.example.warehouse.receiving.CloseInboundReceipt;
 import com.example.warehouse.receiving.ClosureReason;
-import com.example.warehouse.receiving.PutAwayStock;
 import com.example.warehouse.receiving.ReceiptId;
-import com.example.warehouse.receiving.ReceiveStock;
+import com.example.warehouse.receiving.command.CloseInboundReceipt;
+import com.example.warehouse.receiving.command.PutAwayStock;
+import com.example.warehouse.receiving.command.ReceiveStock;
 import com.example.warehouse.shared.LocationId;
 import com.example.warehouse.shared.Quantity;
 import com.example.warehouse.shared.Sku;

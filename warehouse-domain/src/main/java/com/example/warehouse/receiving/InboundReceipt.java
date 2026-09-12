@@ -1,5 +1,11 @@
 package com.example.warehouse.receiving;
 
+import com.example.warehouse.receiving.command.CloseInboundReceipt;
+import com.example.warehouse.receiving.command.PutAwayStock;
+import com.example.warehouse.receiving.command.ReceiveStock;
+import com.example.warehouse.receiving.event.InboundReceiptClosed;
+import com.example.warehouse.receiving.event.StockPutAway;
+import com.example.warehouse.receiving.event.StockReceived;
 import com.example.warehouse.shared.InvalidQuantityException;
 import com.example.warehouse.shared.Quantity;
 import com.example.warehouse.shared.Sku;

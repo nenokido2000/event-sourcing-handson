@@ -1,5 +1,7 @@
-package com.example.warehouse.inventory;
+package com.example.warehouse.inventory.command;
 
+import com.example.warehouse.inventory.InventoryItemId;
+import com.example.warehouse.inventory.ReceiptId;
 import com.example.warehouse.shared.Quantity;
 import org.axonframework.modelling.command.TargetAggregateIdentifier;
 

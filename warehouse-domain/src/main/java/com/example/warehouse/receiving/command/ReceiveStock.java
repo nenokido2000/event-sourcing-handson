@@ -1,5 +1,6 @@
-package com.example.warehouse.receiving;
+package com.example.warehouse.receiving.command;
 
+import com.example.warehouse.receiving.ReceiptId;
 import com.example.warehouse.shared.Quantity;
 import com.example.warehouse.shared.Sku;
 import org.axonframework.modelling.command.TargetAggregateIdentifier;

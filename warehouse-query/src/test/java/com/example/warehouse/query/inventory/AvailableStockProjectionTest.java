@@ -2,7 +2,7 @@ package com.example.warehouse.query.inventory;
 
 import com.example.warehouse.inventory.InventoryItemId;
 import com.example.warehouse.inventory.ReceiptId;
-import com.example.warehouse.inventory.StockPlaced;
+import com.example.warehouse.inventory.event.StockPlaced;
 import com.example.warehouse.shared.LocationId;
 import com.example.warehouse.shared.Quantity;
 import com.example.warehouse.shared.Sku;

@@ -1,5 +1,7 @@
 package com.example.warehouse.inventory;
 
+import com.example.warehouse.inventory.command.PlaceStock;
+import com.example.warehouse.inventory.event.StockPlaced;
 import com.example.warehouse.shared.InvalidQuantityException;
 import com.example.warehouse.shared.LocationId;
 import com.example.warehouse.shared.Quantity;
