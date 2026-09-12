@@ -1,6 +1,8 @@
 package com.example.warehouse;
 
+import com.example.warehouse.inventory.AllocationId;
 import com.example.warehouse.inventory.InventoryItemId;
+import com.example.warehouse.inventory.event.StockAllocated;
 import com.example.warehouse.inventory.event.StockPlaced;
 import com.example.warehouse.receiving.ClosureReason;
 import com.example.warehouse.receiving.ReceiptId;
@@ -8,6 +10,7 @@ import com.example.warehouse.receiving.event.InboundReceiptClosed;
 import com.example.warehouse.receiving.event.StockPutAway;
 import com.example.warehouse.receiving.event.StockReceived;
 import com.example.warehouse.shared.LocationId;
+import com.example.warehouse.shared.OrderLineId;
 import com.example.warehouse.shared.Quantity;
 import com.example.warehouse.shared.Sku;
 import org.axonframework.serialization.SerializedObject;
@@ -59,6 +62,17 @@ class EventSerializationTest {
                 """
                 {"inventoryItemId":{"sku":"SKU-A","locationId":"A-01"},"quantity":20,\
                 "receiptId":"RCP-1","putAwayTotal":50}""");
+    }
+
+    @Test
+    void 引き当てたイベントは複合IDを2つ持つ() {
+        assertRoundTrip(
+                new StockAllocated(new InventoryItemId(new Sku("SKU-A"), new LocationId("A-01")),
+                        new AllocationId(new OrderLineId("OL-1"), new LocationId("A-01")),
+                        new Quantity(30)),
+                """
+                {"inventoryItemId":{"sku":"SKU-A","locationId":"A-01"},\
+                "allocationId":{"orderLineId":"OL-1","locationId":"A-01"},"quantity":30}""");
     }
 
     @Test
