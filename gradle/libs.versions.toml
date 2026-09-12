@@ -34,6 +34,12 @@ assertj-core = { module = "org.assertj:assertj-core" }
 hamcrest = { module = "org.hamcrest:hamcrest" }
 mockito-core = { module = "org.mockito:mockito-core" }
 
+# イベントの永続化形式（版は spring-boot-dependencies が管理 / docs/decisions.md H52）
+# 注釈だけ Jackson 2 の成果物のまま（Jackson 3 の databind が参照している）。パッケージも com.fasterxml.jackson.annotation
+jackson-annotations = { module = "com.fasterxml.jackson.core:jackson-annotations" }
+# イベントのJSONを固定するテストが Jackson3Serializer を直接使うため（axon-messaging は Jackson を推移的に持たない / H35）
+jackson-databind = { module = "tools.jackson.core:jackson-databind" }
+
 # 受入テスト（版はこのファイルが正 / H37）
 gauge-java = { module = "com.thoughtworks.gauge:gauge-java", version.ref = "gaugeJava" }
 # 受入ステップがリードモデルの応答を読むため。版は spring-boot-dependencies が管理

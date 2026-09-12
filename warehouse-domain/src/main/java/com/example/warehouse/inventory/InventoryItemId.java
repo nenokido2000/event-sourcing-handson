@@ -2,6 +2,7 @@ package com.example.warehouse.inventory;
 
 import com.example.warehouse.shared.LocationId;
 import com.example.warehouse.shared.Sku;
+import com.fasterxml.jackson.annotation.JsonIncludeProperties;
 
 /**
  * 在庫ID。{@code (Sku, LocationId)} の複合だが、Axon の集約識別子は単一の値を要求するので
@@ -10,7 +11,14 @@ import com.example.warehouse.shared.Sku;
  *
  * <p>複合識別子を持つのは在庫 BC だけ。他の BC は素材（{@code Sku} / {@code LocationId}）のまま持ち、
  * <b>組み立てるのはポリシー</b>（docs/decisions.md H43）。
+ *
+ * <p><b>イベントには平坦化せずネストのまま書き出す</b>（docs/decisions.md H52）。
+ * {@code "SKU-A@A-01"} の1文字列に畳むと分離子の規約がイベントに焼き込まれ、アップキャスタが永久に
+ * それを知る必要が出るため。ただし{@code @JsonValue} を使わない以上、単一値の値オブジェクトのような
+ * 「出力は1つ」という保証は効かない——{@code isXxx()} / {@code getXxx()} を足せば導出値が混入する。
+ * そこで<b>書き出す項目を {@code @JsonIncludeProperties} で名指しして固定する</b>。
  */
+@JsonIncludeProperties({"sku", "locationId"})
 public record InventoryItemId(Sku sku, LocationId locationId) {
 
     private static final String SEPARATOR = "@";
